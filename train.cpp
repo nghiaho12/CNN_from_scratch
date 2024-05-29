@@ -1,10 +1,17 @@
 #include <iostream>
+#include <fstream>
 #include <ostream>
 #include <vector>
 #include <random>
 #include <cassert>
+#include <cmath>
 
 std::default_random_engine gen;
+
+constexpr int WIDTH = 28;
+constexpr int HEIGHT = 28;
+constexpr int IMAGE_SIZE = WIDTH*HEIGHT;
+constexpr int HEADER_SIZE = 12;
 
 struct Tensor {
     Tensor() {
@@ -40,7 +47,7 @@ struct Tensor {
         s3 = size3;
         data.resize(s0*s1*s2*s3);
     }
-    
+
     void set_random() {
         std::normal_distribution dice(0.0, 1.0);
 
@@ -82,7 +89,7 @@ struct Tensor {
         assert(j < s1);
         assert(k < s2);
         assert(l < s3);
- 
+
         return data[i*s0*s1*s2 + j*s1*s2 + k*s2 + l];
     }
 
@@ -97,7 +104,7 @@ struct Tensor {
     Tensor operator- (const Tensor& rhs) {
         Tensor ret = *this;
         for (size_t i = 0; i < rhs.data.size(); i++) {
-            ret.data[i] -= rhs.data[i]; 
+            ret.data[i] -= rhs.data[i];
         }
         return ret;
     }
@@ -108,15 +115,15 @@ struct Tensor {
 
         switch (t.dim) {
             case 0: os << "shape (empty)"; break;
-            case 1: 
-                os << "shape (" << t.s0 << ")\n"; 
+            case 1:
+                os << "shape (" << t.s0 << ")\n";
                 for (auto d: t.data) {
                     os << d << " ";
                 }
                 os << "\n";
                 break;
-            case 2: 
-                os << "shape (" << t.s0 << ", " << t.s1 << ")\n"; 
+            case 2:
+                os << "shape (" << t.s0 << ", " << t.s1 << ")\n";
 
                 for (int i = 0; i < t.s0; i++) {
                     for (int j = 0; j < t.s1; j++) {
@@ -126,8 +133,8 @@ struct Tensor {
                     os << "\n";
                 }
                 break;
-            case 3: 
-                os << "shape (" << t.s0 << ", " << t.s1 << ", " << t.s2 << ")\n"; 
+            case 3:
+                os << "shape (" << t.s0 << ", " << t.s1 << ", " << t.s2 << ")\n";
 
                 for (int i = 0; i < t.s0; i++) {
                     for (int j = 0; j < t.s1; j++) {
@@ -141,8 +148,8 @@ struct Tensor {
                 }
 
                 break;
-            case 4: 
-                os << "shape (" << t.s0 << ", " << t.s1 << ", " << t.s2 << ", " << t.s3 << ")\n"; 
+            case 4:
+                os << "shape (" << t.s0 << ", " << t.s1 << ", " << t.s2 << ", " << t.s3 << ")\n";
 
                 for (int i = 0; i < t.s0; i++) {
                     for (int j = 0; j < t.s1; j++) {
@@ -167,7 +174,7 @@ struct Tensor {
 
     int dim;
     int s0;
-    int s1; 
+    int s1;
     int s2;
     int s3;
 
@@ -189,7 +196,7 @@ public:
         ksize_ = ksize;
         stride_ = stride;
         padding_ = padding;
-        
+
         weight_ = Tensor(out_channels, in_channels, ksize, ksize);
         weight_.set_random();
         dweight_ = Tensor(out_channels, in_channels, ksize, ksize);
@@ -215,7 +222,7 @@ public:
         for (int oc = 0; oc < output_.s0; oc++) {
             for (int oy = 0; oy < output_.s1; oy++) {
                 for (int ox = 0; ox < output_.s2; ox++) {
-            
+
                     float sum = 0;
 
                     for (int kc = 0; kc < in_channels_; kc++) {
@@ -230,7 +237,7 @@ public:
                                 if (in_x < 0 || in_x >= in.s2) {
                                    continue;
                                 }
-                         
+
                                 float x = in(kc, in_y, in_x);
                                 float w = weight_(oc, kc, ky, kx);
 
@@ -261,7 +268,7 @@ public:
         for (int oc = 0; oc < output_.s0; oc++) {
             for (int oy = 0; oy < output_.s1; oy++) {
                 for (int ox = 0; ox < output_.s2; ox++) {
-                    float d = delta(oc, oy, ox); 
+                    float d = delta(oc, oy, ox);
                     // convolution
                     for (int kc = 0; kc < in_channels_; kc++) {
                         for (int ky = 0; ky < ksize_; ky++) {
@@ -275,11 +282,11 @@ public:
                                 if (in_x < 0 || in_x >= input_.s2) {
                                    continue;
                                 }
-                         
+
                                 float x = input_(kc, in_y, in_x);
                                 float w = weight_(oc, kc, ky, kx);
 
-                                dinput_(kc, in_y, in_x) += w*d; 
+                                dinput_(kc, in_y, in_x) += w*d;
                                 dweight_(oc, kc, ky, kx) += x*d;
                             }
                         }
@@ -291,7 +298,7 @@ public:
         }
 
         return dinput_;
-    } 
+    }
 
     void zero() override {
         dweight_.set_zero();
@@ -331,6 +338,83 @@ public:
     Tensor output_;
 };
 
+class Softmax : public Layer {
+public:
+    Tensor operator()(Tensor in) override {
+        output_ = in;
+
+        float m = in.data[0];
+        float sum_exp = 0;
+
+        for (auto a: in.data) {
+            m = std::max(m, a);
+        }
+
+        for (auto a: in.data) {
+            sum_exp += std::exp(a - m);
+        }
+
+        for (size_t i = 0; i < in.data.size(); i++) {
+            output_.data[i] = std::exp(in.data[i] - m) / sum_exp;
+        }
+
+        return output_;
+    }
+
+    Tensor backward(Tensor delta) override {
+        Tensor ret = output_;
+
+        // expect only one value > 0
+        int index = -1;
+
+        for (size_t i = 0; i < delta.data[i]; i++) {
+            if (delta.data[i] > 0) {
+                index = i;
+                break;
+            }
+        }
+
+        assert(index >= 0);
+
+        for (size_t i = 0; i < output_.data.size(); i++) {
+            if (static_cast<int>(i) == index) {
+                ret.data[i] = output_.data[i]*(1 - output_.data[i]);                
+            } else {
+                ret.data[i] = -output_.data[i]*output_.data[index];
+            }
+        }
+
+        return ret;
+    }
+
+    void zero() override {}
+
+    Tensor output_;
+};
+
+// For multi-class
+class CrossEntropyLoss {
+public:
+    Tensor operator()(Tensor y, int target) {
+        y_ = y;
+        target_ = target;
+        
+        return -std::log(y.data[target]);
+    }
+
+    Tensor backward() {
+        Tensor ret_ = y_;
+        ret_.set_zero();
+
+        ret_.data[target_] = 1.0/y_.data[target_];
+
+        return ret_;
+    }
+
+    Tensor y_;
+    int target_;
+};
+
 class MSELoss {
 public:
     float operator()(Tensor in, Tensor target) {
@@ -359,7 +443,7 @@ public:
         for (size_t i = 0; i < input_.data.size(); i++) {
             float x = div*(input_.data[i] - target_.data[i]);
             dinput_.data[i] = x;
-    
+
         }
 
         return dinput_;
@@ -371,6 +455,48 @@ public:
 };
 
 int main(int argc, char **argv) {
+    if (argc < 3) {
+        std::cout << "./prog [images-ubyte]\n";
+        return 1;
+    }
+
+    std::ifstream is(argv[1], std::ios::binary);
+    if (!is) {
+        std::cerr << "can't open file: " << argv[1] << "\n";
+        return 1;
+    }
+
+    char magic_str[4];
+    char num_images_str[4];
+    char num_rows_str[4];
+    char num_cols_str[4];
+    
+    is.read(magic_str, 4);
+    is.read(num_images_str, 4);
+    is.read(num_rows_str, 4);
+    is.read(num_cols_str, 4);
+
+    std::swap(magic_str[0], magic_str[3]);
+    std::swap(magic_str[1], magic_str[2]);
+
+    std::swap(num_images_str[0], num_images_str[3]);
+    std::swap(num_images_str[1], num_images_str[2]);
+
+    std::swap(num_rows_str[0], num_rows_str[3]);
+    std::swap(num_rows_str[1], num_rows_str[2]);
+
+    std::swap(num_cols_str[0], num_cols_str[3]);
+    std::swap(num_cols_str[1], num_cols_str[2]);
+
+    int magic = *reinterpret_cast<int*>(magic_str);
+    int num_images = *reinterpret_cast<int*>(num_images_str);
+    int num_rows = *reinterpret_cast<int*>(num_rows_str);
+    int num_cols = *reinterpret_cast<int*>(num_cols_str);
+
+    std::cout << magic << " " << num_images << " " << num_rows << " " << num_cols << "\n";
+}
+
+int test(int argc, char **argv) {
     // load MNIST
     // get one image
     Tensor img(1, 3, 3);
@@ -398,7 +524,7 @@ int main(int argc, char **argv) {
 
     Tensor y = conv1(img);
     float l = loss(y, target);
-    
+
     Tensor delta = loss.backward();
     conv1.backward(delta);
 
