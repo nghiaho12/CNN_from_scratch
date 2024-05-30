@@ -58,9 +58,16 @@ struct Tensor {
 
     void set_zero() {
         for (float &d: data) {
-            d = 0;
+            d = 0.0;
         }
     }
+
+    void set_one() {
+        for (float &d: data) {
+            d = 1.0;
+        }
+    }
+
 
     float& operator()(int i) {
         assert(dim == 1);
@@ -80,7 +87,7 @@ struct Tensor {
         assert(i < s0);
         assert(j < s1);
         assert(k < s2);
-        return data[i*s0*s1 + j*s1 + k];
+        return data[i*s1*s2 + j*s2 + k];
     }
 
     float& operator()(int i, int j, int k, int l) {
@@ -90,7 +97,7 @@ struct Tensor {
         assert(k < s2);
         assert(l < s3);
 
-        return data[i*s0*s1*s2 + j*s1*s2 + k*s2 + l];
+        return data[i*s1*s2*s3 + j*s2*s3 + k*s3 + l];
     }
 
     Tensor operator* (float v) {
@@ -207,6 +214,8 @@ public:
     }
 
     Tensor operator()(Tensor in) override {
+        assert(in.s0 == in_channels_);
+
         if (!init_) {
             int out_h = new_out_dim(in.s1);
             int out_w = new_out_dim(in.s2);
@@ -269,6 +278,7 @@ public:
             for (int oy = 0; oy < output_.s1; oy++) {
                 for (int ox = 0; ox < output_.s2; ox++) {
                     float d = delta(oc, oy, ox);
+
                     // convolution
                     for (int kc = 0; kc < in_channels_; kc++) {
                         for (int ky = 0; ky < ksize_; ky++) {
@@ -436,7 +446,7 @@ public:
     Tensor backward() {
         if (dinput_.dim == 0) {
             dinput_ = input_;
-        }
+}
 
         float div = 1.0 / input_.data.size();
 
@@ -454,46 +464,145 @@ public:
     Tensor dinput_;
 };
 
-int main(int argc, char **argv) {
-    if (argc < 3) {
-        std::cout << "./prog [images-ubyte]\n";
-        return 1;
+class MNIST {
+public:
+    MNIST(const char* train_images, const char* train_labels, const char* test_images, const char* test_labels) {
+        train_ = load_images(train_images);
+        test_ = load_images(test_images);
+
+        train_label_ = load_labels(train_labels);
+        test_label_ = load_labels(test_labels);
+
+        assert(train_label_.size() == train_.s0);
+        assert(test_label_.size() == test_.s0);
     }
 
-    std::ifstream is(argv[1], std::ios::binary);
-    if (!is) {
-        std::cerr << "can't open file: " << argv[1] << "\n";
-        return 1;
+    Tensor get_train(int idx) {
+        //Tensor img(1, num_rows_, num_cols_);
     }
-
-    char magic_str[4];
-    char num_images_str[4];
-    char num_rows_str[4];
-    char num_cols_str[4];
     
-    is.read(magic_str, 4);
-    is.read(num_images_str, 4);
-    is.read(num_rows_str, 4);
-    is.read(num_cols_str, 4);
+    Tensor load_images(const char* path) {
+        std::ifstream is(path, std::ios::binary);
+        if (!is) {
+            throw std::runtime_error("can't open " + std::string(path));
+        }
 
-    std::swap(magic_str[0], magic_str[3]);
-    std::swap(magic_str[1], magic_str[2]);
+        char magic_str[4];
+        char num_images_str[4];
+        char num_rows_str[4];
+        char num_cols_str[4];
+        
+        is.read(magic_str, 4);
+        is.read(num_images_str, 4);
+        is.read(num_rows_str, 4);
+        is.read(num_cols_str, 4);
 
-    std::swap(num_images_str[0], num_images_str[3]);
-    std::swap(num_images_str[1], num_images_str[2]);
+        int magic = char4_to_int(magic_str); 
+        int num_images = char4_to_int(num_images_str);
+        int num_rows = char4_to_int(num_rows_str);
+        int num_cols = char4_to_int(num_cols_str);
 
-    std::swap(num_rows_str[0], num_rows_str[3]);
-    std::swap(num_rows_str[1], num_rows_str[2]);
+        assert(num_rows == 28);
+        assert(num_cols == 28);
 
-    std::swap(num_cols_str[0], num_cols_str[3]);
-    std::swap(num_cols_str[1], num_cols_str[2]);
+        std::vector<char> buf(num_images * num_rows * num_cols);
+        is.read(buf.data(), buf.size());
 
-    int magic = *reinterpret_cast<int*>(magic_str);
-    int num_images = *reinterpret_cast<int*>(num_images_str);
-    int num_rows = *reinterpret_cast<int*>(num_rows_str);
-    int num_cols = *reinterpret_cast<int*>(num_cols_str);
+        Tensor ret(num_images, 1, num_rows, num_cols);
 
-    std::cout << magic << " " << num_images << " " << num_rows << " " << num_cols << "\n";
+        for (size_t i = 0; i < buf.size(); i++) {
+            ret.data[i] = buf[i] / 255.f;
+        }
+
+        return ret;
+    }
+
+    std::vector<uint8_t> load_labels(const char* path) {
+        std::ifstream is(path, std::ios::binary);
+        if (!is) {
+            throw std::runtime_error("can't open " + std::string(path));
+        }
+
+        char magic_str[4];
+        char num_str[4];
+        
+        is.read(magic_str, 4);
+        is.read(num_str, 4);
+
+        int num = char4_to_int(num_str);
+
+        std::vector<uint8_t> ret(num);
+        is.read(reinterpret_cast<char*>(ret.data()), ret.size());
+
+        return ret;
+    }
+
+    int char4_to_int(char str[4]) {
+        // MSB to LSB
+        std::swap(str[0], str[3]);
+        std::swap(str[1], str[2]);
+
+        int num = *reinterpret_cast<int*>(str);
+
+        return num;
+    }
+
+    Tensor train_;
+    Tensor test_;
+    std::vector<uint8_t> train_label_;
+    std::vector<uint8_t> test_label_;
+};
+
+void test_Conv2D() {
+    Tensor img(1, 28, 28);
+    Tensor img2(1, 28, 28);
+
+    int in_channels = 1;
+    int out_channels = 4;
+    int ksize = 2;
+    int stride = 2;
+
+    Conv2D conv1(in_channels, out_channels, ksize, stride);
+
+    img.set_random();
+
+    Tensor y = conv1(img);
+    assert(y.s0 == 4);
+    assert(y.s1 == 14);
+    assert(y.s2 == 14);
+
+    // check derivative
+    Tensor delta = y;
+    delta.set_one();
+
+    Tensor dinput = conv1.backward(delta);
+
+    float eps = 0.0001;
+    float tol = 0.001;
+
+    img2 = img;
+    img2(0, 14, 14) += eps;
+    Tensor y2 = conv1(img2);
+
+    float numeric_dinput = 0;
+    for (int i = 0; i < y.s0; i++) {
+        for (int j = 0; j < y.s1; j++) {}
+        numeric_dinput += (y2(i, 7, 7) - y(i, 7, 7)) / eps;
+    }
+
+    std::cout << dinput(0, 14, 14) << " == " << numeric_dinput << "\n";
+    assert(std::abs(dinput(0, 14, 14) - numeric_dinput) < tol);
+}
+
+int main(int argc, char **argv) {
+    test_Conv2D();
+
+    if (argc < 5) {
+        std::cout << "./prog [train_images] [train_labels] [test_images] [test_labels]\n";
+        return 1;
+    }
+
+    MNIST mnist(argv[1], argv[2], argv[3], argv[4]);
 }
 
 int test(int argc, char **argv) {
