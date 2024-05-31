@@ -174,9 +174,9 @@ private:
 
 class Layer {
 public:
-    virtual Tensor operator()(Tensor in) = 0;
-    virtual Tensor backward(Tensor delta) = 0;
-    virtual void zero() = 0;
+    virtual Tensor operator()(Tensor in) { return {}; };
+    virtual Tensor backward(Tensor delta) { return {}; };
+    virtual void zero() {};
 };
 
 class Conv2D : public Layer {
@@ -515,7 +515,6 @@ public:
     }
 
 
-private:
     Tensor load_images(const char* path) {
         std::ifstream is(path, std::ios::binary);
         if (!is) {
