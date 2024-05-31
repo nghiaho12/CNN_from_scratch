@@ -334,7 +334,7 @@ public:
 class ReLU: public Layer {
 public:
     Tensor operator()(Tensor in) override {
-        if (output_.shape().size() == 0) {
+        if (output_.shape().empty()) {
             output_ = in;
         }
 
@@ -346,7 +346,7 @@ public:
     }
 
     Tensor backward(Tensor delta) override {
-        if (dinput_.shape().size() == 0) {
+        if (dinput_.shape().empty()) {
             dinput_ = output_;
         }
 
@@ -366,6 +366,31 @@ public:
 private:
     Tensor output_;
     Tensor dinput_;
+};
+
+class Flatten: public Layer {
+public:
+    Tensor operator()(Tensor in) override {
+        if (output_.shape().empty()) {
+            output_ = Tensor(in.data_.size());
+        }
+
+        input_ = in;
+        output_.data_ = in.data_;
+
+        return output_;
+    }
+
+    Tensor backward(Tensor delta) override {
+        input_.data_ = delta.data_;
+        return input_;
+    }
+
+    void zero() override {}
+
+private:
+    Tensor input_;
+    Tensor output_;
 };
 
 class Softmax: public Layer {
@@ -426,7 +451,7 @@ public:
 // For multi-class
 class CrossEntropyLoss {
 public:
-    Tensor operator()(Tensor y, int target) {
+    float operator()(Tensor y, int target) {
         y_ = y;
         target_ = target;
         
@@ -437,11 +462,12 @@ public:
         Tensor ret_ = y_;
         ret_.set_zero();
 
-        ret_.data_[target_] = 1.0/y_.data_[target_];
+        ret_.data_[target_] = -1.0/y_.data_[target_];
 
         return ret_;
     }
 
+private:
     Tensor y_;
     int target_;
 };

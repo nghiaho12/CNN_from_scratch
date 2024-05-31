@@ -98,10 +98,64 @@ void test_Softmax() {
     assert(std::abs(deriv(2) - 0.665241*(1 - 0.665241)) < tol);
 }
 
+void test_CrossEntropyLoss() {
+    Tensor y(3);
+    CrossEntropyLoss CELoss;
+    int target = 1;
+    constexpr float tol = 0.001;
+
+    y(0) = 0.25;
+    y(1) = 0.50;
+    y(2) = 0.25;
+
+    float loss = CELoss(y, target);
+
+    assert(std::abs(loss - 0.6931) < tol);
+
+    Tensor deriv = CELoss.backward();
+    assert(deriv(0) == 0);
+    assert(deriv(1) == -2);
+    assert(deriv(2) == 0);
+}
+
+void test_Flatten() {    
+    Tensor x(1, 2, 2);
+    Tensor delta(4);
+    Flatten flatten;
+
+    x(0,0,0) = 1;
+    x(0,0,1) = 2;
+    x(0,1,0) = 3;
+    x(0,1,1) = 4;
+
+    delta(0) = -1;
+    delta(1) = -2;
+    delta(2) = -3;
+    delta(3) = -4;
+
+    Tensor y = flatten(x);
+
+    assert(y.shape().size() == 1);
+    assert(y(0) == 1);
+    assert(y(1) == 2);
+    assert(y(2) == 3);
+    assert(y(3) == 4);
+
+    Tensor d = flatten.backward(delta);
+
+    assert(d.shape().size() == 3);
+    assert(d(0,0,0) == -1);
+    assert(d(0,0,1) == -2);
+    assert(d(0,1,0) == -3);
+    assert(d(0,1,1) == -4);
+}
+
 int main(int argc, char **argv) {
     test_ReLU();
     test_Conv2D();
     test_Softmax();
+    test_CrossEntropyLoss();
+    test_Flatten();
 
     std::cout << "All tests passed\n";
 }
