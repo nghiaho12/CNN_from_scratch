@@ -10,25 +10,33 @@ int main(int argc, char **argv) {
 
     MNIST mnist(argv[1], argv[2], argv[3], argv[4]);
 
-    std::vector<Layer> net {
-        Conv2D(1, 4, 2, 2), // --> 4x14x14
-        ReLU(),
-        Conv2D(4, 8, 2, 2), // --> 8x7x7
-        ReLU(),
-        Conv2D(8, 8, 2), // --> 8x6x6
-        ReLU(),
-        Conv2D(8, 10, 2, 2), // --> 10x3x3
-        ReLU(),
-        Conv2D(10, 10, 3), // --> 10x1x1
-        ReLU(),
-        Flatten()
+    // std::vector<Layer*> net {
+    //     new Conv2D(1, 4, 2, 2), // --> 4x14x14
+    //     new ReLU(),
+    //     new Conv2D(4, 8, 2, 2), // --> 8x7x7
+    //     new ReLU(),
+    //     new Conv2D(8, 8, 2), // --> 8x6x6
+    //     new ReLU(),
+    //     new Conv2D(8, 10, 2, 2), // --> 10x3x3
+    //     new ReLU(),
+    //     new Conv2D(10, 10, 3), // --> 10x1x1
+    //     new Flatten(),
+    //     new Softmax()
+    // };
+
+    std::vector<Layer*> net {
+        new Conv2D(1, 10, 28), 
+        new ReLU(),
+        new Flatten(),
+        new Softmax()
     };
+
 
     CrossEntropyLoss CELoss;
 
     int iterations = 10;
-    int batch_size = 128;
-    float lr = 0.01;
+    int batch_size = 64;
+    float lr = 0.1;
 
     std::random_device rd;
     std::mt19937 gen {rd()};
@@ -44,12 +52,8 @@ int main(int argc, char **argv) {
         double sum_loss = 0;
 
         for (size_t j = 0; j < train_idx.size(); j+=batch_size) {
-            // zzero out gradients
-            for (auto& layer: net) {
-                layer.zero();
-            }
-
-            for (int k = 0; k < batch_size; k++) {
+            int k;
+            for (k = 0; k < batch_size; k++) {
                 if (j + k >= train_idx.size()) {
                      break;
                  }
@@ -58,25 +62,34 @@ int main(int argc, char **argv) {
                 Tensor x = mnist.get_train_image(idx);
                 int target = mnist.get_train_label(idx);
 
-                // forward pass
-                for (auto& layer: net) {
-                    x = layer(x); 
+                for (auto layer: net) {
+                    x = (*layer)(x);
                 }
 
                 float loss = CELoss(x, target);
                 sum_loss += loss;
 
+                if (!std::isfinite(loss)) {
+                    std::cout << "loss: " << loss << "\n";
+                    std::cout << x << "\n";
+                    std::cout << target << "\n";
+                    exit(1);
+                }
                 Tensor delta = CELoss.backward(); 
 
-                // backward pass
                 for (int l = net.size() - 1; l >= 0; l--) {
-                     delta = net[l].backward(delta);
+                    delta = net[l]->backward(delta);
                 }
+            }
+
+            for (auto layer: net) {
+                layer->update_weight(lr);
+                layer->zero();
             }
         }
 
         double avg_loss = sum_loss / train_idx.size();
-        std::cout << i << ": avg loss: " << avg_loss << "\n";
+        std::cout << i << ": avg loss: " << avg_loss << std::endl;
     }
 
     return 0;

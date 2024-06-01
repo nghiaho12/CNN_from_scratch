@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+
 #include <ostream>
 #include <vector>
 #include <random>
@@ -102,6 +103,12 @@ public:
         return ret;
     }
 
+    Tensor operator-= (const Tensor& rhs) {
+        for (size_t i = 0; i < rhs.data_.size(); i++) {
+            data_[i] -= rhs.data_[i];
+        }
+        return *this;
+    }
 
     friend std::ostream& operator<<(std::ostream& os, Tensor t) {
         int count = 0;
@@ -142,6 +149,7 @@ public:
                         }
                         os << "\n";
                     }
+                    os << "\n";
                 }
 
                 break;
@@ -155,6 +163,7 @@ public:
                             }
                             os << "\n";
                         }
+                        os << "\n";
                     }
                 }
                 break;
@@ -174,9 +183,11 @@ private:
 
 class Layer {
 public:
-    virtual Tensor operator()(Tensor in) { return {}; };
-    virtual Tensor backward(Tensor delta) { return {}; };
-    virtual void zero() {};
+    virtual Tensor operator()(Tensor in) = 0; 
+    virtual Tensor backward(Tensor delta) = 0; 
+    virtual void zero() = 0;
+    virtual void update_weight(float lr) = 0;
+    virtual std::string name() = 0;
 };
 
 class Conv2D : public Layer {
@@ -196,18 +207,20 @@ public:
         bias_.set_random();
         dbias_ = Tensor(out_channels);
     }
+    
+    std::string name() override {
+        return "Conv2D";
+    }
 
     Tensor operator()(Tensor in) override {
         assert(in.shape(0) == in_channels_);
 
-        if (!init_) {
+        if (dinput_.shape().empty()) {
             int out_h = new_out_dim(in.shape(1));
             int out_w = new_out_dim(in.shape(2));
 
             dinput_ = Tensor(in.shape(0), in.shape(1), in.shape(2));
             output_ = Tensor(out_channels_, out_w, out_h);
-
-            init_ = true;
         }
 
         input_ = in;
@@ -254,8 +267,6 @@ public:
         }
 
         dinput_.set_zero();
-        dweight_.set_zero();
-        dbias_.set_zero();
 
         for (int oc = 0; oc < output_.shape(0); oc++) {
             for (int oy = 0; oy < output_.shape(1); oy++) {
@@ -290,37 +301,45 @@ public:
             }
         }
 
+        count_++;
+
         return dinput_;
     }
 
     void zero() override {
         dweight_.set_zero();
         dbias_.set_zero();
-        dinput_.set_zero();
+        count_ = 0;
     }
+
+    void update_weight(float lr) override {
+        weight_ -= dweight_ * (lr / count_);
+        bias_ -= dbias_ * (lr / count_);
+    } 
 
     friend std::ostream& operator<<(std::ostream& os, Conv2D t) {
         os << "Conv2D (ksize=" << t.ksize_ << " padding=" << t.padding_ << " stride=" << t.stride_ << ")\n";
-        os << "weight: " << t.weight_ << "\n";
-        os << "bias: " << t.bias_ << "\n";
-        os << "dweight: " << t.dweight_ << "\n";
-        os << "dbias: " << t.dbias_ << "\n";
+        os << "weight_: " << t.weight_ << "\n";
+        os << "bias_: " << t.bias_ << "\n";
+        os << "dweight_: " << t.dweight_ << "\n";
+        os << "dbias_: " << t.dbias_ << "\n";
         os << "dinput: " << t.dinput_ << "\n";
 
         return os;
     }
 
+private:
     int new_out_dim(int x) {
         float a = std::ceil(1.0*(x + 2*padding_ - ksize_ + 1) / stride_);
         return static_cast<int>(a);
     }
 
-    bool init_ = false;
     int ksize_;
     int padding_;
     int stride_;
     int in_channels_;
     int out_channels_;
+    int count_ = 0;
 
     Tensor weight_;
     Tensor dweight_;
@@ -334,9 +353,7 @@ public:
 class ReLU: public Layer {
 public:
     Tensor operator()(Tensor in) override {
-        if (output_.shape().empty()) {
-            output_ = in;
-        }
+        output_ = in;
 
         for (auto& x : output_.data_) {
             x = std::max(0.f, x);
@@ -346,12 +363,10 @@ public:
     }
 
     Tensor backward(Tensor delta) override {
-        if (dinput_.shape().empty()) {
-            dinput_ = output_;
-        }
+        dinput_ = output_;
 
         for (size_t i = 0; i < dinput_.data_.size(); i++) {
-            if (dinput_.data_[i] > 0) {
+            if (output_.data_[i] > 0) {
                 dinput_.data_[i] = delta.data_[i]; 
             } else {
                 dinput_.data_[i] = 0;
@@ -361,7 +376,12 @@ public:
         return dinput_;
     }
 
-    void zero() override {}
+    std::string name() override {
+        return "ReLU";
+    }
+
+    void zero() override {} 
+    void update_weight(float lr) override {} 
 
 private:
     Tensor output_;
@@ -382,11 +402,18 @@ public:
     }
 
     Tensor backward(Tensor delta) override {
+        assert(input_.data_.size() == delta.data_.size());
+
         input_.data_ = delta.data_;
         return input_;
     }
 
-    void zero() override {}
+    std::string name() override {
+        return "Flatten";
+    }
+
+    void zero() override {} 
+    void update_weight(float lr) override {} 
 
 private:
     Tensor input_;
@@ -398,7 +425,7 @@ public:
     Tensor operator()(Tensor in) override {
         output_ = in;
 
-        float m = in.data_[0];
+        float m = in(0);
         float sum_exp = 0;
 
         for (auto a: in.data_) {
@@ -419,32 +446,21 @@ public:
     Tensor backward(Tensor delta) override {
         Tensor ret = output_;
 
-        // expect only one value > 0
-        int index = -1;
-        int count = 0;
-        for (size_t i = 0; i < delta.data_.size(); i++) {
-            if (delta.data_[i] > 0) {
-                index = i;
-                count++;
-            }
-        }
-
-        assert(count == 1);
-        assert(index >= 0);
-
-        for (size_t i = 0; i < output_.data_.size(); i++) {
-            if (static_cast<int>(i) == index) {
-                ret.data_[i] = output_.data_[i]*(1 - output_.data_[i]);           
-            } else {
-                ret.data_[i] = -output_.data_[i]*output_.data_[index];
-            }
+        for (int i = 0; i < output_.shape(0); i++) {
+            ret(i) = output_(i)*(1 - output_(i)) * delta(i);
         }
 
         return ret;
     }
 
-    void zero() override {}
+    std::string name() override {
+        return "Softmax";
+    }
 
+    void zero() override {} 
+    void update_weight(float lr) override {} 
+
+private:
     Tensor output_;
 };
 
@@ -454,17 +470,33 @@ public:
     float operator()(Tensor y, int target) {
         y_ = y;
         target_ = target;
-        
-        return -std::log(y.data_[target]);
+      
+        float sum = 0;
+        float eps = 1e-6;
+
+        for (int i = 0; i < static_cast<int>(y.data_.size()); i++) {
+            if (i == target) {
+                sum += -std::log(y.data_[i] + eps);
+            } else {
+                sum += -std::log(1 - y.data_[i] + eps);
+            }
+        }
+
+        return sum;
     }
 
     Tensor backward() {
-        Tensor ret_ = y_;
-        ret_.set_zero();
+        Tensor ret = y_;
 
-        ret_.data_[target_] = -1.0/y_.data_[target_];
+        for (int i = 0; i < static_cast<int>(y_.data_.size()); i++) {
+            if (i == target_) {
+                ret.data_[i] = -1.0/y_.data_[i]; 
+            } else {
+                ret.data_[i] = 1.0/(1 - y_.data_[i]); 
+            }
+        }
 
-        return ret_;
+        return ret;
     }
 
 private:
@@ -545,7 +577,7 @@ public:
         Tensor ret(num_images, 1, num_rows, num_cols);
 
         for (size_t i = 0; i < buf.size(); i++) {
-            ret.data_[i] = buf[i] / 255.f;
+            ret.data_[i] = static_cast<uint8_t>(buf[i]) / 255.f;
         }
 
         return ret;

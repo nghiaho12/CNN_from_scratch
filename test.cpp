@@ -77,25 +77,28 @@ void test_Softmax() {
     Softmax softmax;
 
     constexpr float tol = 0.001;
+    float eps = 0.0001;
 
     x(0) = -1;
     x(1) = 0;
     x(2) = 1;
 
-    Tensor y = softmax(x);
+    delta.set_one();
 
-    assert(std::abs(y(0) - 0.090031) < tol);
-    assert(std::abs(y(1) - 0.244728) < tol);
-    assert(std::abs(y(2) - 0.665241) < tol);
-
-    delta(0) = 0;
-    delta(1) = 0;
-    delta(2) = 1;
-  
+    Tensor y0 = softmax(x);
     Tensor deriv = softmax.backward(delta);
-    assert(std::abs(deriv(0) - -0.665241*0.090031) < tol);
-    assert(std::abs(deriv(1) - -0.665241*0.244728) < tol);
-    assert(std::abs(deriv(2) - 0.665241*(1 - 0.665241)) < tol);
+
+    assert(std::abs(y0(0) - 0.090031) < tol);
+    assert(std::abs(y0(1) - 0.244728) < tol);
+    assert(std::abs(y0(2) - 0.665241) < tol);
+
+    // numerical derivative
+    x(0) += eps;
+    Tensor y1 = softmax(x);
+    float d = (y1(0) - y0(0)) / eps;
+
+    std::cout << deriv(0) << " == " << d << "\n";
+    assert(std::abs(deriv(0) - d) < tol);
 }
 
 void test_CrossEntropyLoss() {
