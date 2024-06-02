@@ -68,7 +68,7 @@ public:
     std::vector<int> shape() const { return shape_; }
 
     void set_random() {
-        std::normal_distribution dice(0.0, 1.0);
+        std::normal_distribution dice(0.0, 2.0);
 
         for (float &d: data_) {
             d = dice(gen);
@@ -95,6 +95,28 @@ public:
         return ret;
     }
 
+    Tensor operator*= (float v) {
+        for (auto &x: data_) {
+            x *= v;
+        }
+        return *this;
+    }
+
+    Tensor operator+ (const Tensor& rhs) {
+        Tensor ret = *this;
+        for (size_t i = 0; i < rhs.data_.size(); i++) {
+            ret.data_[i] += rhs.data_[i];
+        }
+        return ret;
+    }
+
+    Tensor operator+= (const Tensor& rhs) {
+        for (size_t i = 0; i < rhs.data_.size(); i++) {
+            data_[i] += rhs.data_[i];
+        }
+        return *this;
+    }
+
     Tensor operator- (const Tensor& rhs) {
         Tensor ret = *this;
         for (size_t i = 0; i < rhs.data_.size(); i++) {
@@ -108,6 +130,14 @@ public:
             data_[i] -= rhs.data_[i];
         }
         return *this;
+    }
+
+    float sum() {
+        float s = 0;
+        for (float x: data_) {
+            s += x;
+        }
+        return s;
     }
 
     friend std::ostream& operator<<(std::ostream& os, Tensor t) {
@@ -202,10 +232,12 @@ public:
         weight_ = Tensor(out_channels, in_channels, ksize, ksize);
         weight_.set_random();
         dweight_ = Tensor(out_channels, in_channels, ksize, ksize);
+        prev_dweight_ = Tensor(out_channels, in_channels, ksize, ksize);
 
         bias_ = Tensor(out_channels);
         bias_.set_random();
         dbias_ = Tensor(out_channels);
+        prev_dbias_ = Tensor(out_channels);
     }
     
     std::string name() override {
@@ -228,26 +260,25 @@ public:
         for (int oc = 0; oc < output_.shape(0); oc++) {
             for (int oy = 0; oy < output_.shape(1); oy++) {
                 for (int ox = 0; ox < output_.shape(2); ox++) {
-
                     float sum = 0;
 
-                    for (int kc = 0; kc < in_channels_; kc++) {
-                        for (int ky = 0; ky < ksize_; ky++) {
-                            for (int kx = 0; kx < ksize_; kx++) {
-                                int in_y = oy*stride_ - padding_ + ky;
-                                int in_x = ox*stride_ - padding_ + kx;
+                    for (int wc = 0; wc < weight_.shape(1); wc++) {
+                        for (int wy = 0; wy < weight_.shape(2); wy++) {
+                            for (int wx = 0; wx < weight_.shape(3); wx++) {
+                               int in_y = oy*stride_ - padding_ + wy;
+                               int in_x = ox*stride_ - padding_ + wx;
 
-                                if (in_y < 0 || in_y >= in.shape(1)) {
-                                   continue;
-                                }
-                                if (in_x < 0 || in_x >= in.shape(2)) {
-                                   continue;
-                                }
+                               if (in_y < 0 || in_y >= in.shape(1)) {
+                                  continue;
+                               }
+                               if (in_x < 0 || in_x >= in.shape(2)) {
+                                  continue;
+                               }
 
-                                float x = in(kc, in_y, in_x);
-                                float w = weight_(oc, kc, ky, kx);
+                               float x = in(wc, in_y, in_x);
+                               float w = weight_(oc, wc, wy, wx);
 
-                                sum += w*x;
+                               sum += w*x;
                             }
                         }
                     }
@@ -274,11 +305,11 @@ public:
                     float d = delta(oc, oy, ox);
 
                     // convolution
-                    for (int kc = 0; kc < in_channels_; kc++) {
-                        for (int ky = 0; ky < ksize_; ky++) {
-                            for (int kx = 0; kx < ksize_; kx++) {
-                                int in_y = oy*stride_ - padding_ + ky;
-                                int in_x = ox*stride_ - padding_ + kx;
+                    for (int wc = 0; wc < weight_.shape(1); wc++) {
+                        for (int wy = 0; wy < weight_.shape(2); wy++) {
+                            for (int wx = 0; wx < weight_.shape(3); wx++) {
+                                int in_y = oy*stride_ - padding_ + wy;
+                                int in_x = ox*stride_ - padding_ + wx;
 
                                 if (in_y < 0 || in_y >= input_.shape(1)) {
                                    continue;
@@ -287,11 +318,11 @@ public:
                                    continue;
                                 }
 
-                                float x = input_(kc, in_y, in_x);
-                                float w = weight_(oc, kc, ky, kx);
+                                float x = input_(wc, in_y, in_x);
+                                float w = weight_(oc, wc, wy, wx);
 
-                                dinput_(kc, in_y, in_x) += w*d;
-                                dweight_(oc, kc, ky, kx) += x*d;
+                                dinput_(wc, in_y, in_x) += w*d;
+                                dweight_(oc, wc, wy, wx) += x*d;
                             }
                         }
                     }
@@ -313,8 +344,22 @@ public:
     }
 
     void update_weight(float lr) override {
-        weight_ -= dweight_ * (lr / count_);
-        bias_ -= dbias_ * (lr / count_);
+        float momentum = 0.9;
+
+        // average the weights
+        dweight_ *= 1.f/count_;
+        dbias_ *= 1.f/count_;
+
+        // apply momentum
+        dweight_ += prev_dweight_*momentum;
+        dbias_ += prev_dbias_*momentum;
+
+        // do gradient descent
+        weight_ -= dweight_*lr; 
+        bias_ -= dbias_*lr;
+
+        prev_dweight_ = dweight_;
+        prev_dbias_ = dbias_;
     } 
 
     friend std::ostream& operator<<(std::ostream& os, Conv2D t) {
@@ -348,6 +393,8 @@ private:
     Tensor input_;
     Tensor dinput_;
     Tensor output_;
+    Tensor prev_dweight_;
+    Tensor prev_dbias_;
 };
 
 class ReLU: public Layer {
@@ -446,8 +493,16 @@ public:
     Tensor backward(Tensor delta) override {
         Tensor ret = output_;
 
-        for (int i = 0; i < output_.shape(0); i++) {
-            ret(i) = output_(i)*(1 - output_(i)) * delta(i);
+        for (int i = 0; i < output_.shape(0); i++) { 
+            float sum = 0;
+            for (int j = 0; j < output_.shape(0); j++) {
+                if (i == j) {
+                    sum += output_(i)*(1 - output_(i)) * delta(j);
+                } else {
+                    sum += -output_(i)*output_(j) * delta(j);
+                }
+            }
+            ret(i) = sum;
         }
 
         return ret;
@@ -472,7 +527,6 @@ public:
         target_ = target;
       
         float sum = 0;
-        float eps = 1e-6;
 
         for (int i = 0; i < static_cast<int>(y.data_.size()); i++) {
             if (i == target) {
@@ -490,9 +544,9 @@ public:
 
         for (int i = 0; i < static_cast<int>(y_.data_.size()); i++) {
             if (i == target_) {
-                ret.data_[i] = -1.0/y_.data_[i]; 
+                ret.data_[i] = -1.0/(y_.data_[i] + eps); 
             } else {
-                ret.data_[i] = 1.0/(1 - y_.data_[i]); 
+                ret.data_[i] = 1.0/(1 - y_.data_[i] + eps); 
             }
         }
 
@@ -502,6 +556,56 @@ public:
 private:
     Tensor y_;
     int target_;
+    const float eps = 1e-6;
+};
+
+class AccuracyMetric {
+public:
+    AccuracyMetric(int num_classes) {
+        confusion_ = Tensor(num_classes, num_classes);
+    }
+
+    void update(Tensor y, int target) {
+        assert(y.shape(0) == confusion_.shape(0));
+
+        float m = y(0);
+        int pred = 0;
+
+        for (int i = 1; i < y.shape(0); i++) {
+            if (y(i) > m) {
+                m = y(i);
+                pred = i;
+            }
+        }
+
+        assert(pred >= 0);
+
+        confusion_(target, pred)++;
+        total_++;
+    }
+
+    float accuracy() {
+        int correct = 0;
+        for (int i = 0; i < confusion_.shape(0); i++) {
+            correct += confusion_(i, i);
+        }
+
+        return 1.0f*correct / total_;
+    }
+
+    Tensor confusion_matrix() { 
+        return confusion_;
+    }
+
+    void clear() {
+        confusion_.set_zero();
+        total_ = 0;
+    }
+
+private:
+    Tensor confusion_;
+    int total_ = 0;
+
 };
 
 class MNIST {

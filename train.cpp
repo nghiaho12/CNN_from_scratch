@@ -31,8 +31,8 @@ int main(int argc, char **argv) {
         new Softmax()
     };
 
-
     CrossEntropyLoss CELoss;
+    AccuracyMetric accuracy(10);
 
     int iterations = 10;
     int batch_size = 64;
@@ -66,6 +66,8 @@ int main(int argc, char **argv) {
                     x = (*layer)(x);
                 }
 
+                accuracy.update(x, target);
+
                 float loss = CELoss(x, target);
                 sum_loss += loss;
 
@@ -89,7 +91,8 @@ int main(int argc, char **argv) {
         }
 
         double avg_loss = sum_loss / train_idx.size();
-        std::cout << i << ": avg loss: " << avg_loss << std::endl;
+        std::cout << i << ": avg loss: " << avg_loss << " train accuracy: " << accuracy.accuracy() << "\n";
+        accuracy.clear();
     }
 
     return 0;
