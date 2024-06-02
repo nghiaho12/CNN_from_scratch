@@ -223,9 +223,6 @@ public:
 class Conv2D : public Layer {
 public:
     Conv2D(int in_channels, int out_channels, int ksize, int stride=1, int padding=0) {
-        in_channels_ = in_channels;
-        out_channels_ = out_channels;
-        ksize_ = ksize;
         stride_ = stride;
         padding_ = padding;
 
@@ -245,14 +242,14 @@ public:
     }
 
     Tensor operator()(Tensor in) override {
-        assert(in.shape(0) == in_channels_);
+        assert(in.shape(0) == weight_.shape(1));
 
         if (dinput_.shape().empty()) {
             int out_h = new_out_dim(in.shape(1));
             int out_w = new_out_dim(in.shape(2));
 
             dinput_ = Tensor(in.shape(0), in.shape(1), in.shape(2));
-            output_ = Tensor(out_channels_, out_w, out_h);
+            output_ = Tensor(weight_.shape(0), out_w, out_h);
         }
 
         input_ = in;
@@ -363,7 +360,7 @@ public:
     } 
 
     friend std::ostream& operator<<(std::ostream& os, Conv2D t) {
-        os << "Conv2D (ksize=" << t.ksize_ << " padding=" << t.padding_ << " stride=" << t.stride_ << ")\n";
+        os << "Conv2D (ksize=" << t.weight_.shape(2) << " padding=" << t.padding_ << " stride=" << t.stride_ << ")\n";
         os << "weight_: " << t.weight_ << "\n";
         os << "bias_: " << t.bias_ << "\n";
         os << "dweight_: " << t.dweight_ << "\n";
@@ -375,15 +372,13 @@ public:
 
 private:
     int new_out_dim(int x) {
-        float a = std::ceil(1.0*(x + 2*padding_ - ksize_ + 1) / stride_);
+        int ksize = weight_.shape(2);
+        float a = std::ceil(1.0*(x + 2*padding_ - ksize + 1) / stride_);
         return static_cast<int>(a);
     }
 
-    int ksize_;
     int padding_;
     int stride_;
-    int in_channels_;
-    int out_channels_;
     int count_ = 0;
 
     Tensor weight_;

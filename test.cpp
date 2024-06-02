@@ -91,10 +91,11 @@ void test_Softmax() {
     // numerical derivative
     x(0) += DELTA;
     Tensor y1 = softmax(x);
-    float d = (y1(0) - y(0)) / DELTA;
 
-    std::cout << deriv(0) << " == " << d << "\n";
-    assert(std::abs(deriv(0) - d) < TOL);
+    for (int i = 0; i < x.shape(0); i++) {
+        float d = (y1(i) - y(i)) / DELTA;
+        assert(std::abs(deriv(i) - d) < TOL);
+    }
 }
 
 void test_CrossEntropyLoss() {
