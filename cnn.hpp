@@ -7,7 +7,7 @@
 #include <cassert>
 #include <cmath>
 
-std::default_random_engine gen;
+std::default_random_engine gen{42};
 
 class Tensor {
 public:
@@ -67,8 +67,8 @@ public:
     int shape(int dim) const { return shape_.at(dim); }
     std::vector<int> shape() const { return shape_; }
 
-    void set_random() {
-        std::normal_distribution dice(0.0, 2.0);
+    void set_random(double stdev) {
+        std::normal_distribution dice(0.0, stdev);
 
         for (float &d: data_) {
             d = dice(gen);
@@ -215,9 +215,15 @@ class Layer {
 public:
     virtual Tensor operator()(Tensor in) = 0; 
     virtual Tensor backward(Tensor delta) = 0; 
-    virtual void zero() = 0;
-    virtual void update_weight(float lr) = 0;
     virtual std::string name() = 0;
+
+    // optional
+    virtual void zero_grad() {}; 
+    virtual void update_weight(float lr, float momentum) {};
+    virtual Tensor get_weight() { return Tensor(); }
+    virtual Tensor get_bias() { return Tensor(); }
+    virtual void set_weight(Tensor x) { }
+    virtual void set_bias(Tensor x) { }
 };
 
 class Conv2D : public Layer {
@@ -227,16 +233,19 @@ public:
         padding_ = padding;
 
         weight_ = Tensor(out_channels, in_channels, ksize, ksize);
-        weight_.set_random();
         dweight_ = Tensor(out_channels, in_channels, ksize, ksize);
         prev_dweight_ = Tensor(out_channels, in_channels, ksize, ksize);
 
         bias_ = Tensor(out_channels);
-        bias_.set_random();
         dbias_ = Tensor(out_channels);
         prev_dbias_ = Tensor(out_channels);
     }
-    
+
+    Tensor get_weight() override { return weight_; }
+    Tensor get_bias() override { return bias_; }
+    void set_weight(Tensor x) { weight_ = x;}
+    void set_bias(Tensor x) { bias_ = x; }
+
     std::string name() override {
         return "Conv2D";
     }
@@ -334,15 +343,13 @@ public:
         return dinput_;
     }
 
-    void zero() override {
+    void zero_grad() override {
         dweight_.set_zero();
         dbias_.set_zero();
         count_ = 0;
     }
 
-    void update_weight(float lr) override {
-        float momentum = 0.9;
-
+    void update_weight(float lr, float momentum) override {
         // average the weights
         dweight_ *= 1.f/count_;
         dbias_ *= 1.f/count_;
@@ -422,9 +429,6 @@ public:
         return "ReLU";
     }
 
-    void zero() override {} 
-    void update_weight(float lr) override {} 
-
 private:
     Tensor output_;
     Tensor dinput_;
@@ -453,9 +457,6 @@ public:
     std::string name() override {
         return "Flatten";
     }
-
-    void zero() override {} 
-    void update_weight(float lr) override {} 
 
 private:
     Tensor input_;
@@ -507,9 +508,6 @@ public:
         return "Softmax";
     }
 
-    void zero() override {} 
-    void update_weight(float lr) override {} 
-
 private:
     Tensor output_;
 };
@@ -525,9 +523,9 @@ public:
 
         for (int i = 0; i < static_cast<int>(y.data_.size()); i++) {
             if (i == target) {
-                sum += -std::log(y.data_[i] + eps);
+                sum += -std::log(std::max(y.data_[i], EPS));
             } else {
-                sum += -std::log(1 - y.data_[i] + eps);
+                sum += -std::log(std::max(1 - y.data_[i], EPS));
             }
         }
 
@@ -539,9 +537,9 @@ public:
 
         for (int i = 0; i < static_cast<int>(y_.data_.size()); i++) {
             if (i == target_) {
-                ret.data_[i] = -1.0/(y_.data_[i] + eps); 
+                ret.data_[i] = -1.0/std::max(y_.data_[i], EPS); 
             } else {
-                ret.data_[i] = 1.0/(1 - y_.data_[i] + eps); 
+                ret.data_[i] = 1.0/std::max(1 - y_.data_[i], EPS); 
             }
         }
 
@@ -551,7 +549,7 @@ public:
 private:
     Tensor y_;
     int target_;
-    const float eps = 1e-6;
+    const float EPS = std::numeric_limits<float>::epsilon();
 };
 
 class AccuracyMetric {
@@ -676,6 +674,7 @@ public:
         Tensor ret(num_images, 1, num_rows, num_cols);
 
         for (size_t i = 0; i < buf.size(); i++) {
+            // norm to [0, 1]
             ret.data_[i] = static_cast<uint8_t>(buf[i]) / 255.f;
         }
 
@@ -718,3 +717,23 @@ public:
     std::vector<uint8_t> test_label_;
 };
 
+void init_weight_kaiming_he(std::vector<Layer*> &net) {
+    auto shape = net[0]->get_weight().shape();
+    int fan_in = shape[1]*shape[2]*shape[3];
+
+    for (Layer* layer: net) {
+        if (layer->name() == "Conv2D") {
+            Tensor w = layer->get_weight();
+            Tensor b = layer->get_bias();
+
+            b.set_zero();
+            layer->set_bias(b);
+
+            auto s = w.shape();
+            fan_in = s[1] * s[2] * s[3];
+            float stdev = std::sqrt(1.f / fan_in);
+            w.set_random(stdev); 
+            layer->set_weight(w);
+        }
+    }
+}

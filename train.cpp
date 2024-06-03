@@ -10,36 +10,40 @@ int main(int argc, char **argv) {
 
     MNIST mnist(argv[1], argv[2], argv[3], argv[4]);
 
-    // std::vector<Layer*> net {
-    //     new Conv2D(1, 4, 2, 2), // --> 4x14x14
-    //     new ReLU(),
-    //     new Conv2D(4, 8, 2, 2), // --> 8x7x7
-    //     new ReLU(),
-    //     new Conv2D(8, 8, 2), // --> 8x6x6
-    //     new ReLU(),
-    //     new Conv2D(8, 10, 2, 2), // --> 10x3x3
-    //     new ReLU(),
-    //     new Conv2D(10, 10, 3), // --> 10x1x1
-    //     new Flatten(),
-    //     new Softmax()
-    // };
-
     std::vector<Layer*> net {
-        new Conv2D(1, 10, 28), 
+        new Conv2D(1, 2, 2, 2), // --> 2x14x14
         new ReLU(),
+        new Conv2D(2, 4, 2, 2), // --> 4x7x7
+        new ReLU(),
+        new Conv2D(4, 4, 2, 1), // --> 4x6x6
+        new ReLU(),
+        new Conv2D(4, 8, 2, 2), // --> 8x3x3
+        new ReLU(),
+        new Conv2D(8, 10, 3), // --> 10x1x1
         new Flatten(),
         new Softmax()
     };
 
-    CrossEntropyLoss CELoss;
-    AccuracyMetric accuracy(10);
+    // std::vector<Layer*> net {
+    //     new Conv2D(1, 10, 28), 
+    //     new ReLU(),
+    //     new Flatten(),
+    //     new Softmax()
+    // };
 
-    int iterations = 10;
+    init_weight_kaiming_he(net);
+
+    int iterations = 50;
     int batch_size = 64;
-    float lr = 0.1;
+    float lr = 0.01;
+    float momentum = 0.9;
+    int num_classes = 10;
 
     std::random_device rd;
-    std::mt19937 gen {rd()};
+    std::mt19937 gen{rd()};
+
+    CrossEntropyLoss CELoss;
+    AccuracyMetric accuracy(num_classes);
 
     // index to training images
     std::vector<size_t> train_idx(mnist.train_.shape(0));
@@ -49,11 +53,11 @@ int main(int argc, char **argv) {
 
     for (int i = 0; i < iterations; i++) {
         std::ranges::shuffle(train_idx, gen);
+        accuracy.clear();
         double sum_loss = 0;
 
         for (size_t j = 0; j < train_idx.size(); j+=batch_size) {
-            int k;
-            for (k = 0; k < batch_size; k++) {
+            for (int k = 0; k < batch_size; k++) {
                 if (j + k >= train_idx.size()) {
                      break;
                  }
@@ -62,7 +66,7 @@ int main(int argc, char **argv) {
                 Tensor x = mnist.get_train_image(idx);
                 int target = mnist.get_train_label(idx);
 
-                for (auto layer: net) {
+                for (Layer* layer: net) {
                     x = (*layer)(x);
                 }
 
@@ -84,16 +88,17 @@ int main(int argc, char **argv) {
                 }
             }
 
-            for (auto layer: net) {
-                layer->update_weight(lr);
-                layer->zero();
+            for (Layer* layer: net) {
+                layer->update_weight(lr, momentum);
+                layer->zero_grad();
             }
         }
 
         double avg_loss = sum_loss / train_idx.size();
         std::cout << i << ": avg loss: " << avg_loss << " train accuracy: " << accuracy.accuracy() << "\n";
-        accuracy.clear();
     }
+
+    std::cout << "confusion matrix\n" << accuracy.confusion_matrix() << "\n";
 
     return 0;
 }

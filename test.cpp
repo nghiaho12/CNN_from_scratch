@@ -43,7 +43,7 @@ void test_Conv2D() {
 
     Conv2D conv(in_channels, out_channels, ksize, stride);
 
-    img.set_random();
+    img.set_random(1.0);
 
     Tensor y = conv(img);
     assert(y.shape(0) == 4);
@@ -157,12 +157,73 @@ void test_Flatten() {
     assert(d(0,1,1) == -4);
 }
 
+void test_network() {
+    Tensor img(1, 28, 28);
+    img.set_random(1.0);
+
+    std::vector<Layer*> net {
+        new Conv2D(1, 2, 2, 2), // --> 2x14x14
+        new ReLU(),
+        new Conv2D(2, 4, 2, 2), // --> 4x7x7
+        new ReLU(),
+        new Conv2D(4, 4, 2, 1), // --> 4x6x6
+        new ReLU(),
+        new Conv2D(4, 8, 2, 2), // --> 8x3x3
+        new ReLU(),
+        new Conv2D(8, 10, 3), // --> 10x1x1
+        new Flatten(),
+        new Softmax()
+    };
+
+    init_weight_kaiming_he(net);
+
+    CrossEntropyLoss CELoss;
+    int target = 7;
+
+   Tensor x = img;
+    for (Layer* layer: net) {
+        x = (*layer)(x);
+    }
+
+    float loss = CELoss(x, target);
+    Tensor delta = CELoss.backward();
+
+    for (int l = net.size() - 1; l >= 0; l--) {
+        delta = net[l]->backward(delta);
+    }
+
+    // numeric derivative
+    int non_zero = 0;
+    for (int i = 0; i < img.shape(1); i++) {
+        for (int j = 0; j < img.shape(2); j++) {
+            Tensor x = img;
+            x(0, i, j) += DELTA;
+
+            for (Layer* layer: net) {
+                x = (*layer)(x);
+            }
+
+            float loss2 = CELoss(x, target);
+            float dloss = (loss2 - loss) / DELTA;
+
+            if (dloss != 0) {
+                non_zero++;
+            }
+
+            assert(std::abs(dloss - delta(0, i, j)) < TOL);
+        }
+    }
+
+    assert(non_zero > 0);
+}
+
 int main(int argc, char **argv) {
     test_ReLU();
     test_Conv2D();
     test_Softmax();
     test_CrossEntropyLoss();
     test_Flatten();
+    test_network();
 
     std::cout << "All tests passed\n";
 }
