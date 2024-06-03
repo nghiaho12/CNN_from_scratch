@@ -46,9 +46,9 @@ void test_Conv2D() {
     img.set_random(1.0);
 
     Tensor y = conv(img);
-    assert(y.shape(0) == 4);
-    assert(y.shape(1) == 14);
-    assert(y.shape(2) == 14);
+    assert(y.shape[0] == 4);
+    assert(y.shape[1] == 14);
+    assert(y.shape[2] == 14);
 
     // check derivative
     Tensor delta = y;
@@ -56,8 +56,8 @@ void test_Conv2D() {
 
     Tensor deriv = conv.backward(delta);
    
-    for (int i = 0; i < img.shape(1); i++) {
-        for (int j = 0; j < img.shape(2); j++) {
+    for (int i = 0; i < img.shape[1]; i++) {
+        for (int j = 0; j < img.shape[2]; j++) {
             Tensor img2 = img;
             img2(0, i, j) += DELTA;
             Tensor y2 = conv(img2);
@@ -92,7 +92,7 @@ void test_Softmax() {
     x(0) += DELTA;
     Tensor y1 = softmax(x);
 
-    for (int i = 0; i < x.shape(0); i++) {
+    for (int i = 0; i < x.shape[0]; i++) {
         float d = (y1(i) - y(i)) / DELTA;
         assert(std::abs(deriv(i) - d) < TOL);
     }
@@ -116,7 +116,7 @@ void test_CrossEntropyLoss() {
     assert(std::abs(deriv(2) - 1.3333) < TOL);
 
     // numerical derivative
-    for (int i = 0; i < y.shape(0); i++) {
+    for (int i = 0; i < y.shape[0]; i++) {
         Tensor y2 = y;
         y2(i) += DELTA;
         float loss2 = CELoss(y2, target);
@@ -142,7 +142,7 @@ void test_Flatten() {
 
     Tensor y = flatten(x);
 
-    assert(y.shape().size() == 1);
+    assert(y.shape.size() == 1);
     assert(y(0) == 1);
     assert(y(1) == 2);
     assert(y(2) == 3);
@@ -150,7 +150,7 @@ void test_Flatten() {
 
     Tensor d = flatten.backward(delta);
 
-    assert(d.shape().size() == 3);
+    assert(d.shape.size() == 3);
     assert(d(0,0,0) == -1);
     assert(d(0,0,1) == -2);
     assert(d(0,1,0) == -3);
@@ -194,8 +194,8 @@ void test_network() {
 
     // numeric derivative
     int non_zero = 0;
-    for (int i = 0; i < img.shape(1); i++) {
-        for (int j = 0; j < img.shape(2); j++) {
+    for (int i = 0; i < img.shape[1]; i++) {
+        for (int j = 0; j < img.shape[2]; j++) {
             Tensor x = img;
             x(0, i, j) += DELTA;
 

@@ -39,20 +39,17 @@ int main(int argc, char **argv) {
     float momentum = 0.9;
     int num_classes = 10;
 
-    std::random_device rd;
-    std::mt19937 gen{rd()};
-
     CrossEntropyLoss CELoss;
     AccuracyMetric accuracy(num_classes);
 
     // index to training images
-    std::vector<size_t> train_idx(mnist.train_.shape(0));
+    std::vector<size_t> train_idx(mnist.train_.shape[0]);
     for (size_t k = 0; k < train_idx.size(); k++) {
         train_idx[k] = k;
     } 
 
     for (int i = 0; i < iterations; i++) {
-        std::ranges::shuffle(train_idx, gen);
+        std::ranges::shuffle(train_idx, fixed_random_gen);
         accuracy.clear();
         double sum_loss = 0;
 
@@ -66,6 +63,7 @@ int main(int argc, char **argv) {
                 Tensor x = mnist.get_train_image(idx);
                 int target = mnist.get_train_label(idx);
 
+                // forward pass
                 for (Layer* layer: net) {
                     x = (*layer)(x);
                 }
@@ -81,17 +79,15 @@ int main(int argc, char **argv) {
                     std::cout << target << "\n";
                     exit(1);
                 }
-                Tensor delta = CELoss.backward(); 
 
+                // backward pass
+                Tensor delta = CELoss.backward(); 
                 for (int l = net.size() - 1; l >= 0; l--) {
                     delta = net[l]->backward(delta);
                 }
             }
 
-            for (Layer* layer: net) {
-                layer->update_weight(lr, momentum);
-                layer->zero_grad();
-            }
+            SGD_weight_update(net, lr, momentum);
         }
 
         double avg_loss = sum_loss / train_idx.size();
