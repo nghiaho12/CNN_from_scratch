@@ -249,26 +249,25 @@ public:
 
 class Layer {
 public:
+    virtual ~Layer() = default;
     virtual Tensor operator()(const Tensor& in) = 0; 
     virtual Tensor backward(const Tensor& delta) = 0; 
     virtual void print(std::ostream& os) const = 0;
 
-    // optional
-    virtual Tensor dweight() const { std::runtime_error("dweight not implemented"); return {}; }
-    virtual Tensor dbias() const { std::runtime_error("dbias not implemented"); return {}; }
-    virtual Tensor prev_dweight() const { std::runtime_error("prev_dweight not implemented"); return {}; }
-    virtual Tensor prev_dbias() const { std::runtime_error("prev_dbias not implemented"); return {}; }
-    virtual void prev_dweight(const Tensor&) { std::runtime_error("prev_dweight not implemented"); }
-    virtual void prev_dbias(const Tensor&) { std::runtime_error("prev_dbias not implemented"); }
-    virtual void zero_grad() { std::runtime_error("zero_grad not implemented"); }
-    
     friend std::ostream& operator<<(std::ostream& os, const Layer& rhs) {
         rhs.print(os);
         return os;
     }
 
+    // optional
     Tensor weight;
     Tensor bias;
+
+    int sum_count = 0;
+    Tensor sum_dweight;
+    Tensor sum_dbias;
+    Tensor prev_dweight;
+    Tensor prev_dbias;
 };
 
 class Conv2D : public Layer {
@@ -278,12 +277,13 @@ public:
         padding_ = padding;
 
         weight = Tensor(out_channels, in_channels, ksize, ksize);
-        sum_dweight_ = Tensor(out_channels, in_channels, ksize, ksize);
-        prev_dweight_ = Tensor(out_channels, in_channels, ksize, ksize);
-
         bias = Tensor(out_channels);
-        sum_dbias_ = Tensor(out_channels);
-        prev_dbias_ = Tensor(out_channels);
+
+        sum_dweight = Tensor(out_channels, in_channels, ksize, ksize);
+        sum_dbias = Tensor(out_channels);
+
+        prev_dweight = Tensor(out_channels, in_channels, ksize, ksize);
+        prev_dbias = Tensor(out_channels);
     }
 
     Tensor operator()(const Tensor& in) override {
@@ -364,17 +364,17 @@ public:
                                 float w = weight(oc, wc, wy, wx);
 
                                 dinput_(wc, in_y, in_x) += w*d;
-                                sum_dweight_(oc, wc, wy, wx) += x*d;
+                                sum_dweight(oc, wc, wy, wx) += x*d;
                             }
                         }
                     }
 
-                    sum_dbias_(oc) += d;
+                    sum_dbias(oc) += d;
                 }
             }
         }
 
-        sum_count_++;
+        sum_count++;
 
         return dinput_;
     }
@@ -383,19 +383,6 @@ public:
         os << "Conv2D (out=" << weight.shape[0] << " in=" << weight.shape[1] << " ksize=" << weight.shape[2] << " stride=" << stride_ << " padding=" << padding_ << ")";
     }
 
-    Tensor dweight() const override { return sum_dweight_ * (1.f/sum_count_); }
-    Tensor dbias() const override { return sum_dbias_ * (1.f/sum_count_); }
-    Tensor prev_dweight() const override { return prev_dweight_; }
-    Tensor prev_dbias() const override { return prev_dbias_; }
-    void prev_dweight(const Tensor& t) override { prev_dweight_ = t; }
-    void prev_dbias(const Tensor& t) override { prev_dbias_ = t; }
-
-    void zero_grad() override { 
-        sum_dweight_.set_zero();
-        sum_dbias_.set_zero();
-        sum_count_ = 0;
-    }
- 
 private:
     int new_out_dim(int x) {
         int ksize = weight.shape[2];
@@ -410,17 +397,73 @@ private:
     Tensor input_;
     Tensor dinput_;
     Tensor output_;
-    Tensor sum_dweight_;
-    Tensor sum_dbias_;
-    Tensor prev_dweight_;
-    Tensor prev_dbias_;
 };
 
-class ReLU: public Layer {
+class Dense : public Layer {
+public:
+    Dense(int in_size, int out_size) {
+        weight = Tensor(out_size, in_size);
+        bias = Tensor(out_size);
+
+        sum_dweight = Tensor(out_size, in_size);
+        sum_dbias = Tensor(out_size);
+
+        prev_dweight = Tensor(out_size, in_size);
+        prev_dbias = Tensor(out_size);
+
+        output_ = Tensor(out_size);
+        dinput_ = Tensor(out_size, in_size);
+    }
+
+    Tensor operator()(const Tensor& in) override {
+        assert(in.shape.size() == 1);
+        assert(in.shape[0] == weight.shape[1]);
+
+        input_ = in;
+
+        for (int i = 0; i < weight.shape[0]; i++) {
+            float sum = 0;
+            for (int j = 0; j < weight.shape[1]; j++) {
+                sum += weight(i, j) * in(j);
+            }
+            sum += bias(i);
+            output_(i) = sum;
+        }
+
+        return output_;
+    }
+
+    Tensor backward(const Tensor& delta) override {
+        for (int i = 0; i < weight.shape[0]; i++) {
+            float d = delta(i);
+            for (int j = 0; j < weight.shape[1]; j++) {
+                dinput_(i, j) = weight(i, j) * d;
+                sum_dweight(i, j) += input_(j) * d;
+            }
+            sum_dbias(i) += d;
+        }
+
+        sum_count++;
+
+        return dinput_;
+    }
+
+    void print(std::ostream& os) const override { 
+        os << "Dense (in=" << weight.shape[1] << " out=" << weight.shape[0] << ")";
+    }
+
+private:
+    Tensor output_;
+    Tensor input_;
+    Tensor dinput_;
+};
+
+class ReLU : public Layer {
 public:
     Tensor operator()(const Tensor& in) override {
         if (output_.data.empty()) {
             output_ = in;
+            dinput_ = in;
         }
 
         size_t i = 0;
@@ -433,10 +476,6 @@ public:
     }
 
     Tensor backward(const Tensor& delta) override {
-        if (dinput_.data.empty()) {
-            dinput_ = output_;
-        }
-
         size_t i = 0;
         for (float x : output_.data) {
             if (x > 0) {
@@ -460,7 +499,7 @@ private:
     Tensor dinput_;
 };
 
-class Flatten: public Layer {
+class Flatten : public Layer {
 public:
     Tensor operator()(const Tensor& in) override {
         if (output_.shape.empty()) {
@@ -489,7 +528,7 @@ private:
     Tensor output_;
 };
 
-class Softmax: public Layer {
+class Softmax : public Layer {
 public:
     Tensor operator()(const Tensor& in) override {
         assert(in.shape.size() == 1);
@@ -728,12 +767,18 @@ private:
 
 template <typename RandGenerator>
 void init_weight_kaiming_he(std::vector<Layer*> &net, RandGenerator& gen) {
-    for (Layer* layer: net) {
-        if (layer->weight.shape.size() == 4) { // Conv2D
-            layer->bias.set_zero();
+    for (auto layer: net) {
+        layer->bias.set_zero();
+        auto s = layer->weight.shape;
+        int fan_in = 0;
 
-            auto s = layer->weight.shape;
-            int fan_in = s[1] * s[2] * s[3];
+        if (s.size() == 4) { // Conv2D
+            fan_in = s[1] * s[2] * s[3];
+        } else if (s.size() == 2) { // Dense
+            fan_in = layer->weight.shape[1];
+        }
+
+        if (fan_in > 0) {
             float stdev = std::sqrt(1.f / fan_in);
             layer->weight.set_random(stdev, gen);
         }
@@ -741,22 +786,24 @@ void init_weight_kaiming_he(std::vector<Layer*> &net, RandGenerator& gen) {
 }
 
 void SGD_weight_update(std::vector<Layer*> &net, float lr, float momentum) {
-    for (Layer* layer: net) {
-        if (layer->weight.shape.empty()) {
+    for (auto l: net) {
+        if (l->weight.shape.empty()) {
             continue;
         }
 
         // apply momentum
-        Tensor dweight = layer->dweight() + layer->prev_dweight()*momentum;
-        Tensor dbias = layer->dbias() + layer->prev_dbias()*momentum;
+        Tensor dweight = l->sum_dweight * (1.f/l->sum_count) + l->prev_dweight*momentum;
+        Tensor dbias = l->sum_dbias * (1.f/l->sum_count) + l->prev_dbias*momentum;
 
         // gradient descent
-        layer->weight -= dweight*lr; 
-        layer->bias -= dbias*lr;
+        l->weight -= dweight*lr; 
+        l->bias -= dbias*lr;
 
-        layer->prev_dweight(dweight);
-        layer->prev_dbias(dbias);
+        l->prev_dweight = dweight;
+        l->prev_dbias = dbias;
 
-        layer->zero_grad();
+        l->sum_dweight.set_zero();
+        l->sum_dbias.set_zero();
+        l->sum_count = 0;
     }
 }

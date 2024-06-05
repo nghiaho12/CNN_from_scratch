@@ -21,6 +21,14 @@ int main(int argc, char **argv) {
     MNIST_dataset train(argv[1], argv[2]);
     MNIST_dataset test(argv[3], argv[4]);
 
+    // std::vector<Layer*> net {
+    //     new Flatten(),
+    //     new Dense(28*28, 32),
+    //     new ReLU(),
+    //     new Dense(32, 10),
+    //     new Softmax()
+    // };
+
     std::vector<Layer*> net {
         new Conv2D(1, 4, 2, 2), // --> 4x14x14
         new ReLU(),
@@ -35,14 +43,15 @@ int main(int argc, char **argv) {
         new Softmax()
     };
 
+    init_weight_kaiming_he(net, random_gen);
+
+    // print some info about the network
     int total_params = 0;
     for (auto &l : net) {
         std::cout << *l << "\n";
         total_params += l->weight.data.size() + l->bias.data.size();
     }
     std::cout << "\ntotal trainable params: " << total_params << "\n";
-
-    init_weight_kaiming_he(net, random_gen);
     
     // index to training images
     std::vector<size_t> train_idx(train.labels.size());
@@ -90,6 +99,7 @@ int main(int argc, char **argv) {
         std::cout << i << ": avg loss: " << avg_loss << " train accuracy: " << accuracy.accuracy() << "\n";
     }
 
+    // test dataset
     accuracy.clear();
     for (size_t i = 0; i < test.labels.size(); i++) {
         Tensor x = test.get_image(i);
@@ -103,6 +113,11 @@ int main(int argc, char **argv) {
     std::cout << "\n";
     std::cout << "test accuracy: " << accuracy.accuracy() << "\n";
     std::cout << "confusion matrix: " << accuracy.confusion_matrix() << "\n";
+
+    // clean up memory
+    for (auto l : net) {
+        delete l;
+    }
 
     return 0;
 }

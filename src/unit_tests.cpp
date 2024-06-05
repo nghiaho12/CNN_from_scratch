@@ -8,18 +8,23 @@ std::default_random_engine random_gen{42};
 
 void test_Tensor() {
     std::cout << "test_Tensor" << "\n";
-    bool pass = false;
 
-    try {
-        Tensor a(1);
-        Tensor b(1, 1);
+    Tensor a(2);
+    Tensor b(2, 2);
+    Tensor c(2, 2, 2);
+    Tensor d(2, 2, 2, 2);
 
-        a = b;
-    } catch (const std::runtime_error &e) {
-        pass = true;
-    }
+    a(1) = 1;
+    assert(a(1) == 1);
 
-    assert(pass);
+    b(1, 1) = 1;
+    assert(b(1, 1) == 1);
+
+    c(1, 1, 1) = 1;
+    assert(c(1, 1, 1) == 1);
+
+    d(1, 1, 1, 1) = 1;
+    assert(d(1, 1, 1, 1) == 1);
 }
 
 void test_ReLU() {
@@ -249,9 +254,38 @@ void test_network() {
     assert(non_zero > 0);
 }
 
+void test_Dense() {
+    std::cout << "test_Dense\n";
+
+    Tensor x(3);
+    Tensor delta(2);
+    Dense dense(3, 2);
+    
+    x.set_random(1.f, random_gen);
+    delta.set_one();
+    dense.weight.set_random(1.f, random_gen);
+
+    Tensor y = dense(x);
+    Tensor deriv = dense.backward(delta);
+
+    // numerical deriv
+    for (int i = 0; i < dense.weight.shape[0]; i++) {
+        for (int j = 0; j < dense.weight.shape[1]; j++) {
+            Tensor x2 = x;
+            x2(j) += DELTA;
+            Tensor y2 = dense(x2);
+            float d = (y2(i) - y(i)) / DELTA;
+
+            assert(std::abs(d - deriv(i, j)) < TOL);
+        }
+    }
+}
+
 int main() {
+    test_Tensor();
     test_ReLU();
     test_Conv2D();
+    test_Dense();
     test_Softmax();
     test_CrossEntropyLoss();
     test_Flatten();
