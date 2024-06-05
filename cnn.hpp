@@ -1,13 +1,11 @@
+#pragma once
+
 #include <iostream>
 #include <fstream>
-
-#include <ostream>
 #include <vector>
 #include <random>
 #include <cassert>
 #include <cmath>
-
-std::default_random_engine fixed_random_gen{42};
 
 class Tensor {
 public:
@@ -95,11 +93,12 @@ public:
         return data[i*shape[1]*shape[2]*shape[3] + j*shape[2]*shape[3] + k*shape[3] + l];
     }
 
-    void set_random(double stdev) {
+    template <typename RandGenerator>
+    void set_random(double stdev, RandGenerator& gen) {
         std::normal_distribution dice(0.0, stdev);
 
         for (float &d: data) {
-            d = dice(fixed_random_gen);
+            d = dice(gen);
         }
     }
 
@@ -115,7 +114,21 @@ public:
         }
     }
 
-    Tensor operator* (float v) {
+    bool same_shape(const Tensor &rhs) const {
+        if (shape.size() != rhs.shape.size()) {
+            return false;
+        }
+
+        for (size_t i = 0; i < shape.size(); i++) {
+            if (shape[i] != rhs.shape[i]) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    Tensor operator* (float v) const {
         Tensor ret = *this;
         for (auto &x: ret.data) {
             x *= v;
@@ -130,7 +143,7 @@ public:
         return *this;
     }
 
-    Tensor operator+ (const Tensor& rhs) {
+    Tensor operator+ (const Tensor& rhs) const {
         Tensor ret = *this;
         for (size_t i = 0; i < rhs.data.size(); i++) {
             ret.data[i] += rhs.data[i];
@@ -138,7 +151,7 @@ public:
         return ret;
     }
 
-    Tensor operator+= (const Tensor& rhs) {
+    Tensor& operator+= (const Tensor& rhs) {
         for (size_t i = 0; i < rhs.data.size(); i++) {
             data[i] += rhs.data[i];
         }
@@ -153,19 +166,15 @@ public:
         return ret;
     }
 
-    Tensor operator-= (const Tensor& rhs) {
+    Tensor& operator-= (const Tensor& rhs) {
         for (size_t i = 0; i < rhs.data.size(); i++) {
             data[i] -= rhs.data[i];
         }
         return *this;
     }
 
-    float sum() {
-        float s = 0;
-        for (float x: data) {
-            s += x;
-        }
-        return s;
+    float sum() const {
+        return std::accumulate(data.begin(), data.end(), 0.f);
     }
 
     friend std::ostream& operator<<(std::ostream& os, Tensor t) {
@@ -240,40 +249,41 @@ public:
 
 class Layer {
 public:
-    virtual std::string name() = 0;
     virtual Tensor operator()(const Tensor& in) = 0; 
     virtual Tensor backward(const Tensor& delta) = 0; 
+    virtual void print(std::ostream& os) const = 0;
 
-    // used by Conv2D and Dense
+    // optional
+    virtual Tensor dweight() const { std::runtime_error("dweight not implemented"); return {}; }
+    virtual Tensor dbias() const { std::runtime_error("dbias not implemented"); return {}; }
+    virtual Tensor prev_dweight() const { std::runtime_error("prev_dweight not implemented"); return {}; }
+    virtual Tensor prev_dbias() const { std::runtime_error("prev_dbias not implemented"); return {}; }
+    virtual void prev_dweight(const Tensor&) { std::runtime_error("prev_dweight not implemented"); }
+    virtual void prev_dbias(const Tensor&) { std::runtime_error("prev_dbias not implemented"); }
+    virtual void zero_grad() { std::runtime_error("zero_grad not implemented"); }
+    
+    friend std::ostream& operator<<(std::ostream& os, const Layer& rhs) {
+        rhs.print(os);
+        return os;
+    }
+
     Tensor weight;
     Tensor bias;
-
-    // Tensor accumulates for every backward() call
-    Tensor dweight; // derivative of output with respect to weight
-    Tensor dbias;// derivative of output with respect to bias
-    int batch_count = 0; // number of backward() calls
-
-    Tensor prev_dweight;
-    Tensor prev_dbias;
 };
 
 class Conv2D : public Layer {
 public:
-    std::string name() override {
-        return "Conv2D";
-    }
-
     Conv2D(int in_channels, int out_channels, int ksize, int stride=1, int padding=0) {
         stride_ = stride;
         padding_ = padding;
 
         weight = Tensor(out_channels, in_channels, ksize, ksize);
-        dweight = Tensor(out_channels, in_channels, ksize, ksize);
-        prev_dweight = Tensor(out_channels, in_channels, ksize, ksize);
+        sum_dweight_ = Tensor(out_channels, in_channels, ksize, ksize);
+        prev_dweight_ = Tensor(out_channels, in_channels, ksize, ksize);
 
         bias = Tensor(out_channels);
-        dbias = Tensor(out_channels);
-        prev_dbias = Tensor(out_channels);
+        sum_dbias_ = Tensor(out_channels);
+        prev_dbias_ = Tensor(out_channels);
     }
 
     Tensor operator()(const Tensor& in) override {
@@ -354,32 +364,38 @@ public:
                                 float w = weight(oc, wc, wy, wx);
 
                                 dinput_(wc, in_y, in_x) += w*d;
-                                dweight(oc, wc, wy, wx) += x*d;
+                                sum_dweight_(oc, wc, wy, wx) += x*d;
                             }
                         }
                     }
 
-                    dbias(oc) += d;
+                    sum_dbias_(oc) += d;
                 }
             }
         }
 
-        batch_count++;
+        sum_count_++;
 
         return dinput_;
     }
 
-    friend std::ostream& operator<<(std::ostream& os, Conv2D t) {
-        os << "Conv2D (ksize=" << t.weight.shape[2] << " padding=" << t.padding_ << " stride=" << t.stride_ << ")\n";
-        os << "weight: " << t.weight << "\n";
-        os << "bias: " << t.bias << "\n";
-        os << "dweight: " << t.dweight << "\n";
-        os << "dbias: " << t.dbias << "\n";
-        os << "dinput: " << t.dinput_ << "\n";
-
-        return os;
+    void print(std::ostream& os) const override { 
+        os << "Conv2D (out=" << weight.shape[0] << " in=" << weight.shape[1] << " ksize=" << weight.shape[2] << " stride=" << stride_ << " padding=" << padding_ << ")";
     }
 
+    Tensor dweight() const override { return sum_dweight_ * (1.f/sum_count_); }
+    Tensor dbias() const override { return sum_dbias_ * (1.f/sum_count_); }
+    Tensor prev_dweight() const override { return prev_dweight_; }
+    Tensor prev_dbias() const override { return prev_dbias_; }
+    void prev_dweight(const Tensor& t) override { prev_dweight_ = t; }
+    void prev_dbias(const Tensor& t) override { prev_dbias_ = t; }
+
+    void zero_grad() override { 
+        sum_dweight_.set_zero();
+        sum_dbias_.set_zero();
+        sum_count_ = 0;
+    }
+ 
 private:
     int new_out_dim(int x) {
         int ksize = weight.shape[2];
@@ -389,11 +405,15 @@ private:
 
     int padding_;
     int stride_;
-    int count_ = 0;
+    int sum_count_ = 0;
 
     Tensor input_;
     Tensor dinput_;
     Tensor output_;
+    Tensor sum_dweight_;
+    Tensor sum_dbias_;
+    Tensor prev_dweight_;
+    Tensor prev_dbias_;
 };
 
 class ReLU: public Layer {
@@ -431,8 +451,8 @@ public:
         return dinput_;
     }
 
-    std::string name() override {
-        return "ReLU";
+    void print(std::ostream& os) const override { 
+        os << "ReLU";
     }
 
 private:
@@ -460,8 +480,8 @@ public:
         return input_;
     }
 
-    std::string name() override {
-        return "Flatten";
+    void print(std::ostream& os) const override { 
+        os << "Flatten";
     }
 
 private:
@@ -472,6 +492,8 @@ private:
 class Softmax: public Layer {
 public:
     Tensor operator()(const Tensor& in) override {
+        assert(in.shape.size() == 1);
+
         output_ = in;
 
         // sum of exp trick for numerical stability
@@ -515,18 +537,19 @@ public:
         return ret;
     }
 
-    std::string name() override {
-        return "Softmax";
+    void print(std::ostream& os) const override { 
+        os << "Softmax";
     }
 
 private:
     Tensor output_;
 };
 
-// For multi-class
 class CrossEntropyLoss {
 public:
     float operator()(const Tensor& y, int target) {
+        assert(y.shape.size() == 1);
+
         y_ = y;
         target_ = target;
       
@@ -612,49 +635,29 @@ private:
 
 };
 
-class MNIST {
+class MNIST_dataset {
 public:
-    MNIST(const char* train_images, const char* train_labels, const char* test_images, const char* test_labels) {
-        train_ = load_images(train_images);
-        test_ = load_images(test_images);
+    MNIST_dataset(const char* image_path, const char* label_path) {
+        images = load_images(image_path);
+        labels = load_labels(label_path);
 
-        train_label_ = load_labels(train_labels);
-        test_label_ = load_labels(test_labels);
-
-        assert(static_cast<int>(train_label_.size()) == train_.shape[0]);
-        assert(static_cast<int>(test_label_.size()) == test_.shape[0]);
+        assert(static_cast<int>(labels.size()) == images.shape[0]);
     }
 
-    Tensor get_train_image(int idx) const {
-        int h = train_.shape[2];
-        int w = train_.shape[3];
+    Tensor get_image(int idx) const {
+        int h = images.shape[2];
+        int w = images.shape[3];
 
         Tensor img(1, h, w);
-        std::copy(&train_.data[idx*h*w], &train_.data[(idx+1)*h*w], img.data.begin());
+        std::copy(&images.data[idx*h*w], &images.data[(idx+1)*h*w], img.data.begin());
 
         return img;
     }
 
-    uint8_t get_train_label(int idx) const {
-        return train_label_[idx];
-    }
+    Tensor images;
+    std::vector<uint8_t> labels;
 
-
-    Tensor get_test_image(int idx) const {
-        int h = test_.shape[2];
-        int w = test_.shape[3];
-
-        Tensor img(1, h, w);
-        std::copy(&test_.data[idx*h*w], &test_.data[(idx+1)*h*w], img.data.begin());
-
-        return img;
-    }
-   
-    uint8_t get_test_label(int idx) const {
-        return test_label_[idx];
-    }
-
-
+private:
     Tensor load_images(const char* path) {
         std::ifstream is(path, std::ios::binary);
         if (!is) {
@@ -721,50 +724,39 @@ public:
 
         return num;
     }
-
-    Tensor train_;
-    Tensor test_;
-    std::vector<uint8_t> train_label_;
-    std::vector<uint8_t> test_label_;
 };
 
-void init_weight_kaiming_he(std::vector<Layer*> &net) {
+template <typename RandGenerator>
+void init_weight_kaiming_he(std::vector<Layer*> &net, RandGenerator& gen) {
     for (Layer* layer: net) {
-        if (layer->name() == "Conv2D") {
+        if (layer->weight.shape.size() == 4) { // Conv2D
             layer->bias.set_zero();
 
             auto s = layer->weight.shape;
             int fan_in = s[1] * s[2] * s[3];
             float stdev = std::sqrt(1.f / fan_in);
-            layer->weight.set_random(stdev);
+            layer->weight.set_random(stdev, gen);
         }
     }
 }
 
 void SGD_weight_update(std::vector<Layer*> &net, float lr, float momentum) {
     for (Layer* layer: net) {
-        if (layer->batch_count == 0) {
+        if (layer->weight.shape.empty()) {
             continue;
         }
 
-        // average the weights
-        layer->dweight *= 1.f/layer->batch_count;
-        layer->dbias *= 1.f/layer->batch_count;
-
         // apply momentum
-        layer->dweight += layer->prev_dweight*momentum;
-        layer->dbias += layer->prev_dbias*momentum;
+        Tensor dweight = layer->dweight() + layer->prev_dweight()*momentum;
+        Tensor dbias = layer->dbias() + layer->prev_dbias()*momentum;
 
         // gradient descent
-        layer->weight -= layer->dweight*lr; 
-        layer->bias -= layer->dbias*lr;
+        layer->weight -= dweight*lr; 
+        layer->bias -= dbias*lr;
 
-        layer->prev_dweight = layer->dweight;
-        layer->prev_dbias = layer->dbias;
+        layer->prev_dweight(dweight);
+        layer->prev_dbias(dbias);
 
-        // zero out the gradients
-        layer->dweight.set_zero();
-        layer->dbias.set_zero();
-        layer->batch_count = 0;
+        layer->zero_grad();
     }
 }

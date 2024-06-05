@@ -1,10 +1,30 @@
+#undef NDEBUG
 #include "cnn.hpp"
 #include <iostream>
 
 const float TOL = 0.01;
 const float DELTA = 0.001;
+std::default_random_engine random_gen{42};
+
+void test_Tensor() {
+    std::cout << "test_Tensor" << "\n";
+    bool pass = false;
+
+    try {
+        Tensor a(1);
+        Tensor b(1, 1);
+
+        a = b;
+    } catch (const std::runtime_error &e) {
+        pass = true;
+    }
+
+    assert(pass);
+}
 
 void test_ReLU() {
+    std::cout << "test_ReLU" << "\n";
+
     Tensor x(4);
     Tensor delta(4);
     ReLU relu;
@@ -34,6 +54,8 @@ void test_ReLU() {
 }
 
 void test_Conv2D() {
+    std::cout << "test_Conv2D" << "\n";
+
     Tensor img(1, 28, 28);
 
     int in_channels = 1;
@@ -43,7 +65,7 @@ void test_Conv2D() {
 
     Conv2D conv(in_channels, out_channels, ksize, stride);
 
-    img.set_random(1.0);
+    img.set_random(1.0, random_gen);
 
     Tensor y = conv(img);
     assert(y.shape[0] == 4);
@@ -69,6 +91,8 @@ void test_Conv2D() {
 }
 
 void test_Softmax() {
+    std::cout << "test_Softmax" << "\n";
+
     Tensor x(3);
     Tensor delta(3);
     Softmax softmax;
@@ -99,6 +123,8 @@ void test_Softmax() {
 }
 
 void test_CrossEntropyLoss() {
+    std::cout << "test_CrossEntropyLoss" << "\n";
+
     Tensor y(3);
     CrossEntropyLoss CELoss;
     int target = 1;
@@ -126,6 +152,8 @@ void test_CrossEntropyLoss() {
 }
 
 void test_Flatten() {    
+    std::cout << "test_Flatten" << "\n";
+
     Tensor x(1, 2, 2);
     Tensor delta(4);
     Flatten flatten;
@@ -158,8 +186,11 @@ void test_Flatten() {
 }
 
 void test_network() {
+    std::cout << "test_network" << "\n";
+
     Tensor img(1, 28, 28);
-    img.set_random(1.0);
+
+    img.set_random(1.0, random_gen);
 
     std::vector<Layer*> net {
         new Conv2D(1, 2, 2, 2), // --> 2x14x14
@@ -175,13 +206,14 @@ void test_network() {
         new Softmax()
     };
 
-    init_weight_kaiming_he(net);
+    init_weight_kaiming_he(net, random_gen);
 
     CrossEntropyLoss CELoss;
     int target = 7;
 
    Tensor x = img;
     for (Layer* layer: net) {
+        std::cout << *layer << "\n";
         x = (*layer)(x);
     }
 
@@ -217,7 +249,7 @@ void test_network() {
     assert(non_zero > 0);
 }
 
-int main(int argc, char **argv) {
+int main() {
     test_ReLU();
     test_Conv2D();
     test_Softmax();
@@ -225,6 +257,7 @@ int main(int argc, char **argv) {
     test_Flatten();
     test_network();
 
-    std::cout << "All tests passed\n";
+    std::cout << "\n";
+    std::cout << "All tests passed!\n";
 }
 
