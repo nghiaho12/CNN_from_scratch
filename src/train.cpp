@@ -1,6 +1,26 @@
-#include "cnn.hpp"
 #include <iostream>
 #include <algorithm>
+
+#include "cnn.hpp"
+#include "mnist.hpp"
+
+// split training index into training + validation
+std::tuple<std::vector<size_t>, std::vector<size_t>> split_index(const std::vector<size_t> &train_idx, float validation_per) {
+    // you should shuffle train_idx before running this function
+   
+    assert(validation_per > 0 && validation < 1);
+
+    int valid_size = static_cast<int>(train_idx.size() * validation_per);
+    int train_size = static_cast<int>(train_idx.size() - valid_size);
+
+    std::vector<size_t> valid_idx(valid_size);
+    std::vector<size_t> new_train_idx(train_size);
+
+    std::copy(train_idx.begin(), train_idx.begin() + train_size, new_train_idx.begin());
+    std::copy(train_idx.begin() + train_size, train_idx.end(), valid_idx.begin());
+
+    return {new_train_idx, valid_idx};
+}
 
 int main(int argc, char **argv) {
     if (argc < 5) {
@@ -13,10 +33,10 @@ int main(int argc, char **argv) {
     float lr = 0.01;
     float momentum = 0.9;
     int num_classes = 10;
-    std::default_random_engine random_gen{42};
+    float validation_per = 0.05; // percentage of training to use for validation
 
-    CrossEntropyLoss CELoss;
-    AccuracyMetric accuracy(num_classes);
+    // fixed random for testing
+    std::default_random_engine random_gen{42};
 
     MNIST_dataset train(argv[1], argv[2]);
     MNIST_dataset test(argv[3], argv[4]);
@@ -43,21 +63,24 @@ int main(int argc, char **argv) {
         new Softmax()
     };
 
-    init_weight_kaiming_he(net, random_gen);
+    print_network_info(net);
+    init_network_weight(net, random_gen);
 
-    // print some info about the network
-    int total_params = 0;
-    for (auto &l : net) {
-        std::cout << *l << "\n";
-        total_params += l->weight.data.size() + l->bias.data.size();
-    }
-    std::cout << "\ntotal trainable params: " << total_params << "\n";
-    
-    // index to training images
+    CrossEntropyLoss CELoss;
+    AccuracyMetric accuracy(num_classes);
+
+    // create training and validation set
     std::vector<size_t> train_idx(train.labels.size());
     for (size_t k = 0; k < train_idx.size(); k++) {
         train_idx[k] = k;
     } 
+    std::ranges::shuffle(train_idx, random_gen);
+
+    std::vector<size_t> valid_idx;
+    std::tie(train_idx, valid_idx) = split_index(train_idx, validation_per);
+
+    std::cout << "training size: " << train_idx.size() << "\n";
+    std::cout << "validation size: " << valid_idx.size() << "\n";
 
     // main training loop
     for (int i = 0; i < iterations; i++) {
@@ -76,7 +99,7 @@ int main(int argc, char **argv) {
                 int target = train.labels[idx];
 
                 // forward pass
-                for (Layer* layer: net) {
+                for (auto layer: net) {
                     x = (*layer)(x);
                 }
 
@@ -96,14 +119,31 @@ int main(int argc, char **argv) {
         }
 
         double avg_loss = sum_loss / train_idx.size();
-        std::cout << i << ": avg loss: " << avg_loss << " train accuracy: " << accuracy.accuracy() << "\n";
+        float train_accuracy = accuracy.accuracy();
+
+        // accuracy on validation set
+        accuracy.clear();
+        for (auto idx : valid_idx) {
+            Tensor x = train.get_image(idx);
+            int target = train.labels[idx];
+
+            for (auto layer: net) {
+                x = (*layer)(x);
+            }
+
+            accuracy.update(x, target);
+        }
+
+        float valid_accuracy = accuracy.accuracy();
+
+        std::cout << i << ": avg loss: " << avg_loss << ", train accuracy: " << train_accuracy << ", validation accuracy: " << valid_accuracy << "\n";
     }
 
     // test dataset
     accuracy.clear();
     for (size_t i = 0; i < test.labels.size(); i++) {
         Tensor x = test.get_image(i);
-        for (Layer* layer: net) {
+        for (auto layer: net) {
             x = (*layer)(x);
         }
 
@@ -112,11 +152,12 @@ int main(int argc, char **argv) {
 
     std::cout << "\n";
     std::cout << "test accuracy: " << accuracy.accuracy() << "\n";
-    std::cout << "confusion matrix: " << accuracy.confusion_matrix() << "\n";
+    std::cout << "confusion matrix for test set\n";
+    accuracy.print_confusion_matrix();
 
     // clean up memory
-    for (auto l : net) {
-        delete l;
+    for (auto layer : net) {
+        delete layer;
     }
 
     return 0;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iostream>
+#include <iomanip>
 #include <fstream>
 #include <vector>
 #include <random>
@@ -380,7 +381,7 @@ public:
     }
 
     void print(std::ostream& os) const override { 
-        os << "Conv2D (out=" << weight.shape[0] << " in=" << weight.shape[1] << " ksize=" << weight.shape[2] << " stride=" << stride_ << " padding=" << padding_ << ")";
+        os << "Conv2D (in=" << weight.shape[1] << " out=" << weight.shape[0] << " ksize=" << weight.shape[2] << " stride=" << stride_ << " padding=" << padding_ << ")";
     }
 
 private:
@@ -466,7 +467,7 @@ public:
             dinput_ = in;
         }
 
-        size_t i = 0;
+        int i = 0;
         for (float x : in.data) {
             output_.data[i] = std::max(0.f, x);
             i++;
@@ -476,7 +477,7 @@ public:
     }
 
     Tensor backward(const Tensor& delta) override {
-        size_t i = 0;
+        int i = 0;
         for (float x : output_.data) {
             if (x > 0) {
                 dinput_.data[i] = delta.data[i]; 
@@ -536,22 +537,16 @@ public:
         output_ = in;
 
         // sum of exp trick for numerical stability
-        float m = in(0);
+        float max_val = *std::max_element(in.data.begin(), in.data.end());
+
         float sum_exp = 0;
-
-        // find max value
         for (auto x : in.data) {
-            m = std::max(m, x);
+            sum_exp += std::exp(x - max_val);
         }
 
-        // subtract max value
+        int i = 0;
         for (auto x : in.data) {
-            sum_exp += std::exp(x - m);
-        }
-
-        size_t i = 0;
-        for (auto x : in.data) {
-            output_.data[i] = std::exp(x - m) / sum_exp;
+            output_.data[i] = std::exp(x - max_val) / sum_exp;
             i++;
         }
 
@@ -594,8 +589,8 @@ public:
       
         float sum = 0;
 
-        for (int i = 0; i < static_cast<int>(y.data.size()); i++) {
-            if (i == target) {
+        for (size_t i = 0; i < y_.data.size(); i++) {
+            if (static_cast<int>(i) == target_) {
                 sum += -std::log(std::max(y.data[i], EPS));
             } else {
                 sum += -std::log(std::max(1 - y.data[i], EPS));
@@ -608,8 +603,8 @@ public:
     Tensor backward() {
         Tensor ret = y_;
 
-        for (int i = 0; i < static_cast<int>(y_.data.size()); i++) {
-            if (i == target_) {
+        for (size_t i = 0; i < y_.data.size(); i++) {
+            if (static_cast<int>(i) == target_) {
                 ret.data[i] = -1.0/std::max(y_.data[i], EPS); 
             } else {
                 ret.data[i] = 1.0/std::max(1 - y_.data[i], EPS); 
@@ -659,8 +654,16 @@ public:
         return 1.0f*correct / total_;
     }
 
-    Tensor confusion_matrix() { 
-        return confusion_;
+    void print_confusion_matrix() { 
+        for (int i = 0; i < confusion_.shape[0]; i++) {
+            for (int j = 0; j < confusion_.shape[0]; j++) {
+                std::cout << std::setw(5) << confusion_(i, j);
+            }
+            std::cout << "\n";
+        }
+        std::cout << "\n";
+        std::cout << "rows = ground truth\n";
+        std::cout << "cols = predicted\n";
     }
 
     void clear() {
@@ -674,100 +677,9 @@ private:
 
 };
 
-class MNIST_dataset {
-public:
-    MNIST_dataset(const char* image_path, const char* label_path) {
-        images = load_images(image_path);
-        labels = load_labels(label_path);
-
-        assert(static_cast<int>(labels.size()) == images.shape[0]);
-    }
-
-    Tensor get_image(int idx) const {
-        int h = images.shape[2];
-        int w = images.shape[3];
-
-        Tensor img(1, h, w);
-        std::copy(&images.data[idx*h*w], &images.data[(idx+1)*h*w], img.data.begin());
-
-        return img;
-    }
-
-    Tensor images;
-    std::vector<uint8_t> labels;
-
-private:
-    Tensor load_images(const char* path) {
-        std::ifstream is(path, std::ios::binary);
-        if (!is) {
-            throw std::runtime_error("can't open " + std::string(path));
-        }
-
-        char magic_str[4];
-        char num_images_str[4];
-        char num_rows_str[4];
-        char num_cols_str[4];
-        
-        is.read(magic_str, 4);
-        is.read(num_images_str, 4);
-        is.read(num_rows_str, 4);
-        is.read(num_cols_str, 4);
-
-        // int magic = char4_to_int(magic_str); 
-        int num_images = char4_to_int(num_images_str);
-        int num_rows = char4_to_int(num_rows_str);
-        int num_cols = char4_to_int(num_cols_str);
-
-        assert(num_rows == 28);
-        assert(num_cols == 28);
-
-        std::vector<char> buf(num_images * num_rows * num_cols);
-        is.read(buf.data(), buf.size());
-
-        Tensor ret(num_images, 1, num_rows, num_cols);
-
-        for (size_t i = 0; i < buf.size(); i++) {
-            // norm to [0, 1]
-            ret.data[i] = static_cast<uint8_t>(buf[i]) / 255.f;
-        }
-
-        return ret;
-    }
-
-    std::vector<uint8_t> load_labels(const char* path) {
-        std::ifstream is(path, std::ios::binary);
-        if (!is) {
-            throw std::runtime_error("can't open " + std::string(path));
-        }
-
-        char magic_str[4];
-        char num_str[4];
-        
-        is.read(magic_str, 4);
-        is.read(num_str, 4);
-
-        int num = char4_to_int(num_str);
-
-        std::vector<uint8_t> ret(num);
-        is.read(reinterpret_cast<char*>(ret.data()), ret.size());
-
-        return ret;
-    }
-
-    int char4_to_int(char str[4]) {
-        // MSB to LSB
-        std::swap(str[0], str[3]);
-        std::swap(str[1], str[2]);
-
-        int num = *reinterpret_cast<int*>(str);
-
-        return num;
-    }
-};
-
 template <typename RandGenerator>
-void init_weight_kaiming_he(std::vector<Layer*> &net, RandGenerator& gen) {
-    for (auto layer: net) {
+void init_network_weight(std::vector<Layer*> &net, RandGenerator& gen) {
+    for (auto layer : net) {
         layer->bias.set_zero();
         auto s = layer->weight.shape;
         int fan_in = 0;
@@ -786,7 +698,7 @@ void init_weight_kaiming_he(std::vector<Layer*> &net, RandGenerator& gen) {
 }
 
 void SGD_weight_update(std::vector<Layer*> &net, float lr, float momentum) {
-    for (auto l: net) {
+    for (auto l : net) {
         if (l->weight.shape.empty()) {
             continue;
         }
@@ -806,4 +718,18 @@ void SGD_weight_update(std::vector<Layer*> &net, float lr, float momentum) {
         l->sum_dbias.set_zero();
         l->sum_count = 0;
     }
+}
+
+void print_network_info(const std::vector<Layer*> &net) {
+    std::cout << "network layers:\n";
+
+    int total_params = 0;
+    int i = 0;
+    for (auto layer : net) {
+        std::cout << "  " << i << ": " << *layer << "\n";
+        total_params += layer->weight.data.size() + layer->bias.data.size();
+        i++;
+    }
+
+    std::cout << "\ntotal trainable params: " << total_params << "\n";
 }

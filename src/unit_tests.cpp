@@ -211,7 +211,7 @@ void test_network() {
         new Softmax()
     };
 
-    init_weight_kaiming_he(net, random_gen);
+    init_network_weight(net, random_gen);
 
     CrossEntropyLoss CELoss;
     int target = 7;
@@ -281,6 +281,11 @@ void test_Dense() {
     }
 }
 
+void test_AccuracyMetric() {
+    AccuracyMetric acc(10);
+    acc.print_confusion_matrix();
+}
+
 int main() {
     test_Tensor();
     test_ReLU();
@@ -290,6 +295,7 @@ int main() {
     test_CrossEntropyLoss();
     test_Flatten();
     test_network();
+    test_AccuracyMetric();
 
     std::cout << "\n";
     std::cout << "All tests passed!\n";

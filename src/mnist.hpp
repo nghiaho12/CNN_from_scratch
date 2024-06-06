@@ -51,9 +51,6 @@ private:
         int num_rows = char4_to_int(num_rows_str);
         int num_cols = char4_to_int(num_cols_str);
 
-        assert(num_rows == 28);
-        assert(num_cols == 28);
-
         std::vector<char> buf(num_images * num_rows * num_cols);
         is.read(buf.data(), buf.size());
 
