@@ -47,5 +47,5 @@ Train on the dataset
 ./train train-images-idx3-ubyte train-labels-idx1-ubyte t10k-images-idx3-ubyte t10k-labels-idx1-ubyte
 
 ```
-Change the path to where you downloaded them.
+Change the path to the files as needed.
 
