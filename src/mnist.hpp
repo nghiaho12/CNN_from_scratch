@@ -17,6 +17,8 @@ public:
     }
 
     Tensor get_image(int idx) const {
+        assert(idx >= 0 && idx < static_cast<int>(labels.size()));
+
         int h = images.shape[2];
         int w = images.shape[3];
 
@@ -26,8 +28,23 @@ public:
         return img;
     }
 
+    void display(int index) {
+        Tensor img = get_image(index);
+
+        for (int i = 0; i < img.shape[1]; i++) {
+            for (int j = 0; j < img.shape[2]; j++) {
+                if (img(0, i, j) >= 0.5) {
+                    std::cout << "##";
+                } else {
+                    std::cout << "  ";
+                }
+            }
+            std::cout << "\n";
+        }  
+    }
+
     Tensor images;
-    std::vector<uint8_t> labels;
+    std::vector<int> labels;
 
 private:
     Tensor load_images(const char* path) {
@@ -64,7 +81,7 @@ private:
         return ret;
     }
 
-    std::vector<uint8_t> load_labels(const char* path) {
+    std::vector<int> load_labels(const char* path) {
         std::ifstream is(path, std::ios::binary);
         if (!is) {
             throw std::runtime_error("can't open " + std::string(path));
@@ -78,8 +95,14 @@ private:
 
         int num = char4_to_int(num_str);
 
-        std::vector<uint8_t> ret(num);
-        is.read(reinterpret_cast<char*>(ret.data()), ret.size());
+        std::vector<char> buf(num);
+        is.read(buf.data(), buf.size());
+
+        std::vector<int> ret(num);
+
+        for (int i = 0; i < num; i++) {
+            ret[i] = buf[i];
+        }
 
         return ret;
     }

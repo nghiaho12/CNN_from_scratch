@@ -10,7 +10,7 @@ This code has been tested on Ubuntu 22.04.
 # How to run
 Only MNIST data format is supported. 
 
-Download the MNIST handwritten dataset.
+Download the MNIST handwritten dataset
 
 ```
 wget https://raw.githubusercontent.com/fgnt/mnist/master/train-images-idx3-ubyte.gz
@@ -19,7 +19,7 @@ wget https://raw.githubusercontent.com/fgnt/mnist/master/t10k-images-idx3-ubyte.
 wget https://raw.githubusercontent.com/fgnt/mnist/master/t10k-labels-idx1-ubyte.gz
 ```
 
-or alternatively the fashion MNIST dataset.
+or the fashion MNIST dataset.
 
 ```
 wget http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/train-images-idx3-ubyte.gz
@@ -48,4 +48,9 @@ Train on the dataset
 
 ```
 Change the path to the files as needed.
+
+To view the images on the console
+```
+./view train-images-idx3-ubyte train-labels-idx1-ubyte
+```
 

@@ -13,10 +13,14 @@ add_executable(train
     src/cnn.hpp
     src/mnist.hpp
 )
-
 target_compile_definitions(train PUBLIC NDEBUG)
 
 add_executable(unit_tests 
     src/unit_tests.cpp
     src/cnn.hpp
+)
+
+add_executable(view 
+    src/view.cpp
+    src/mnist.hpp
 )
