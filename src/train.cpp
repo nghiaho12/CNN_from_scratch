@@ -22,6 +22,19 @@ std::tuple<std::vector<size_t>, std::vector<size_t>> split_index(const std::vect
     return {new_train_idx, valid_idx};
 }
 
+std::tuple<double, double> mean_stdev(const std::vector<float> &x) {
+    double mean = std::accumulate(x.begin(), x.end(), 0.0) / x.size();
+    double stdev = 0;
+
+    for (float a : x) {
+        stdev += (a - mean)*(a - mean);
+    }
+
+    stdev = std::sqrt(stdev / x.size());
+
+    return {mean, stdev};
+}
+
 int main(int argc, char **argv) {
     if (argc < 5) {
         std::cout << "./prog [train_images] [train_labels] [test_images] [test_labels]\n";
@@ -87,6 +100,7 @@ int main(int argc, char **argv) {
         std::ranges::shuffle(train_idx, random_gen);
         accuracy.clear();
         double sum_loss = 0;
+        std::vector<float> acts[net.size()]; // stats on each layer's output
 
         for (size_t j = 0; j < train_idx.size(); j+=batch_size) {
             for (int k = 0; k < batch_size; k++) {
@@ -99,8 +113,11 @@ int main(int argc, char **argv) {
                 int target = train.labels[idx];
 
                 // forward pass
-                for (auto layer: net) {
+                for (size_t l = 0; l < net.size(); l++) {
+                    Layer *layer = net[l];
                     x = (*layer)(x);
+
+                    acts[l].insert(acts[l].end(), x.data.begin(), x.data.end());
                 }
 
                 accuracy.update(x, target);
@@ -136,7 +153,13 @@ int main(int argc, char **argv) {
 
         float valid_accuracy = accuracy.accuracy();
 
-        std::cout << i << ": avg loss: " << avg_loss << ", train accuracy: " << train_accuracy << ", validation accuracy: " << valid_accuracy << "\n";
+        std::cout << "iter " << i << ": avg loss: " << avg_loss << ", train accuracy: " << train_accuracy << ", validation accuracy: " << valid_accuracy << "\n";
+
+        // if stdev is close to zero then the layer's weights are probably in a bad state
+        for (size_t j = 0; j < net.size(); j++) {
+            auto[mean, stdev] = mean_stdev(acts[j]);
+            std::cout << "  layer " << j << ": output mean=" << mean << " stdev=" << stdev << "\n";
+        }
     }
 
     // test dataset
